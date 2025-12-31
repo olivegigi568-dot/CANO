@@ -308,6 +308,7 @@ fn net_service_accepts_inbound_peer() {
         outbound_peers: vec![],
         client_cfg: client_cfg.clone(),
         server_cfg,
+        max_peers: 100,
     };
 
     // Create NetService
@@ -390,6 +391,7 @@ fn net_service_connects_outbound_peers_from_config() {
         outbound_peers: vec![],
         client_cfg: client_cfg.clone(),
         server_cfg: server_cfg.clone(),
+        max_peers: 100,
     };
 
     let mut service_a = NetService::new(service_cfg_a).expect("NetService::new for A failed");
@@ -420,6 +422,7 @@ fn net_service_connects_outbound_peers_from_config() {
         outbound_peers: vec![(PeerId(1), actual_addr_a)],
         client_cfg,
         server_cfg,
+        max_peers: 100,
     };
 
     let mut service_b = NetService::new(service_cfg_b).expect("NetService::new for B failed");
@@ -483,6 +486,7 @@ fn net_service_step_accepts_connection() {
         outbound_peers: vec![],
         client_cfg: client_cfg.clone(),
         server_cfg,
+        max_peers: 100,
     };
 
     let mut service = NetService::new(service_cfg).expect("NetService::new failed");
