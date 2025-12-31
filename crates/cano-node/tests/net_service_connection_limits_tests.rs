@@ -1,12 +1,12 @@
-//! Integration tests for NetService.
+//! Integration tests for NetService connection limits and liveness.
 //!
-//! These tests exercise the full path:
-//!  - NetService binding and accepting connections
-//!  - NetService connecting to outbound peers
-//!  - PeerManager integration
+//! These tests exercise:
+//!  - NetService's max_peers limit enforcement
+//!  - NetService's is_peer_live delegation to PeerManager
 
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use cano_crypto::{AeadSuite, CryptoError, KemSuite, SignatureSuite, StaticCryptoProvider};
 use cano_net::{
@@ -14,12 +14,12 @@ use cano_net::{
 };
 use cano_node::peer::PeerId;
 use cano_node::peer_manager::PeerManager;
-use cano_node::{NetService, NetServiceConfig};
+use cano_node::{NetService, NetServiceConfig, NetServiceError};
 use cano_wire::io::WireEncode;
-use cano_wire::net::{NetMessage, NetworkDelegationCert};
+use cano_wire::net::NetworkDelegationCert;
 
 // ============================================================================
-// Dummy Implementations for Testing (same as in other tests)
+// Dummy Implementations for Testing (same as in net_service_smoke_tests.rs)
 // ============================================================================
 
 /// A DummyKem that produces deterministic shared secrets based on pk/sk.
@@ -291,12 +291,93 @@ fn create_test_setup() -> TestSetup {
 }
 
 // ============================================================================
-// NetService Smoke Tests
+// Connection Limit Tests
 // ============================================================================
 
-/// Test that NetService can accept an inbound peer connection.
+/// Test that NetService respects the max_peers limit.
+///
+/// Verifies:
+/// 1. First inbound connection is accepted when under limit.
+/// 2. Second inbound connection is rejected with PeerLimitReached error.
+/// 3. Peer count remains at the limit.
 #[test]
-fn net_service_accepts_inbound_peer() {
+fn net_service_respects_max_peers_limit() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Create NetServiceConfig with max_peers = 1
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 1, // Limit to exactly 1 peer
+    };
+
+    // Create NetService
+    let mut service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = service.local_addr().expect("local_addr failed");
+
+    // Server thread: accept the first connection, then verify limit is enforced
+    let server_handle = thread::spawn(move || {
+        // Accept first connection
+        for _ in 0..1000 {
+            match service.accept_one() {
+                Ok(Some(peer_id)) => {
+                    assert_eq!(peer_id, PeerId(1));
+                    assert_eq!(service.peers().len(), 1);
+                    return service;
+                }
+                Ok(None) => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(e) => panic!("First accept_one failed unexpectedly: {:?}", e),
+            }
+        }
+        panic!("Timeout waiting for first inbound connection");
+    });
+
+    // Client 1: connect to server
+    let mut client1_mgr = PeerManager::new();
+    client1_mgr
+        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg.clone())
+        .expect("client1 add_outbound_peer failed");
+
+    assert_eq!(client1_mgr.len(), 1);
+
+    // Wait for server to accept first connection
+    let mut service = server_handle.join().expect("server thread panicked");
+    assert_eq!(service.peers().len(), 1);
+
+    // Now the server is at its max_peers limit (1).
+    // Attempting to accept another connection should return PeerLimitReached.
+
+    // Immediately check that accept_one returns PeerLimitReached
+    // (before any second client tries to connect).
+    match service.accept_one() {
+        Err(NetServiceError::PeerLimitReached { max }) => {
+            assert_eq!(max, 1);
+        }
+        other => panic!(
+            "Expected PeerLimitReached error, got: {:?}",
+            other
+        ),
+    }
+
+    // Verify peer count is still 1
+    assert_eq!(service.peers().len(), 1);
+}
+
+/// Test that is_peer_live correctly delegates to PeerManager.
+///
+/// Verifies:
+/// 1. Initially peer is NOT live (no pong received).
+/// 2. After setting last_pong via test helper, peer IS live.
+/// 3. After setting an old timestamp, peer is NOT live.
+#[test]
+fn net_service_is_peer_live_delegates_to_peer_manager() {
     let setup = create_test_setup();
     let server_cfg = setup.server_cfg;
     let client_cfg = setup.client_cfg;
@@ -315,18 +396,15 @@ fn net_service_accepts_inbound_peer() {
     let mut service = NetService::new(service_cfg).expect("NetService::new failed");
     let actual_addr = service.local_addr().expect("local_addr failed");
 
-    // Server thread: run accept_one in a loop until we get a peer
+    // Server thread: accept one connection
     let server_handle = thread::spawn(move || {
-        // Try accept_one until we get a peer (with a timeout via loop limit)
         for _ in 0..1000 {
             match service.accept_one() {
                 Ok(Some(peer_id)) => {
-                    // Got a peer!
-                    assert_eq!(service.peers().len(), 1);
-                    return (service, peer_id);
+                    assert_eq!(peer_id, PeerId(1));
+                    return service;
                 }
                 Ok(None) => {
-                    // No connection yet, sleep briefly and try again
                     std::thread::sleep(std::time::Duration::from_millis(1));
                 }
                 Err(e) => panic!("accept_one failed: {:?}", e),
@@ -335,182 +413,54 @@ fn net_service_accepts_inbound_peer() {
         panic!("Timeout waiting for inbound connection");
     });
 
-    // Client side: use PeerManager to connect
+    // Client connects
     let mut client_mgr = PeerManager::new();
     client_mgr
         .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
         .expect("client add_outbound_peer failed");
-
-    assert_eq!(client_mgr.len(), 1);
 
     // Wait for server to accept
-    let (mut service, peer_id) = server_handle.join().expect("server thread panicked");
-
-    // Verify we got a peer ID
-    assert_eq!(peer_id, PeerId(1));
-    assert_eq!(service.peers().len(), 1);
-
-    // Optionally verify communication works by exchanging a ping/pong
-    // Client sends ping
-    client_mgr
-        .send_to(PeerId(100), &NetMessage::Ping(42))
-        .expect("client send_to failed");
-
-    // Server receives and responds
-    let (recv_id, msg) = service
-        .peers()
-        .recv_from_any()
-        .expect("server recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Ping(42));
-
-    service
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Pong(42))
-        .expect("server send_to failed");
-
-    // Client receives pong
-    let (recv_id, msg) = client_mgr
-        .recv_from_any()
-        .expect("client recv_from_any failed");
-    assert_eq!(recv_id, PeerId(100));
-    assert_eq!(msg, NetMessage::Pong(42));
-}
-
-/// Test that NetService can connect to outbound peers from config.
-#[test]
-fn net_service_connects_outbound_peers_from_config() {
-    let setup = create_test_setup();
-    let server_cfg = setup.server_cfg;
-    let client_cfg = setup.client_cfg;
-
-    // Side A: Start a NetService as a listener (the "server" that will accept)
-    let listen_addr_a = "127.0.0.1:0".parse().unwrap();
-    let service_cfg_a = NetServiceConfig {
-        listen_addr: listen_addr_a,
-        outbound_peers: vec![],
-        client_cfg: client_cfg.clone(),
-        server_cfg: server_cfg.clone(),
-        max_peers: 100,
-    };
-
-    let mut service_a = NetService::new(service_cfg_a).expect("NetService::new for A failed");
-    let actual_addr_a = service_a.local_addr().expect("local_addr failed for A");
-
-    // Server A thread: accept the incoming connection
-    let server_handle = thread::spawn(move || {
-        // Try accept_one until we get a peer
-        for _ in 0..1000 {
-            match service_a.accept_one() {
-                Ok(Some(peer_id)) => {
-                    assert_eq!(service_a.peers().len(), 1);
-                    return (service_a, peer_id);
-                }
-                Ok(None) => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(e) => panic!("accept_one failed: {:?}", e),
-            }
-        }
-        panic!("Timeout waiting for inbound connection on A");
-    });
-
-    // Side B: Create a NetService with outbound_peers configured
-    let listen_addr_b = "127.0.0.1:0".parse().unwrap();
-    let service_cfg_b = NetServiceConfig {
-        listen_addr: listen_addr_b,
-        outbound_peers: vec![(PeerId(1), actual_addr_a)],
-        client_cfg,
-        server_cfg,
-        max_peers: 100,
-    };
-
-    let mut service_b = NetService::new(service_cfg_b).expect("NetService::new for B failed");
-
-    // B connects to all outbound peers
-    service_b
-        .connect_outbound_from_config()
-        .expect("connect_outbound_from_config failed");
-
-    // Verify B now has one peer
-    assert_eq!(service_b.peers().len(), 1);
-
-    // Wait for A to accept
-    let (mut service_a, peer_id) = server_handle.join().expect("server thread panicked");
-
-    // Verify A also has one peer
-    assert_eq!(peer_id, PeerId(1));
-    assert_eq!(service_a.peers().len(), 1);
-
-    // Verify connectivity by exchanging a ping/pong
-    // B sends ping to its peer (PeerId(1))
-    service_b
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Ping(999))
-        .expect("B send_to failed");
-
-    // A receives the ping
-    let (recv_id, msg) = service_a
-        .peers()
-        .recv_from_any()
-        .expect("A recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Ping(999));
-
-    // A sends pong back
-    service_a
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Pong(999))
-        .expect("A send_to failed");
-
-    // B receives pong
-    let (recv_id, msg) = service_b
-        .peers()
-        .recv_from_any()
-        .expect("B recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Pong(999));
-}
-
-/// Test that NetService::step() accepts inbound connections.
-#[test]
-fn net_service_step_accepts_connection() {
-    let setup = create_test_setup();
-    let server_cfg = setup.server_cfg;
-    let client_cfg = setup.client_cfg;
-
-    // Create NetService for the server side
-    let listen_addr = "127.0.0.1:0".parse().unwrap();
-    let service_cfg = NetServiceConfig {
-        listen_addr,
-        outbound_peers: vec![],
-        client_cfg: client_cfg.clone(),
-        server_cfg,
-        max_peers: 100,
-    };
-
-    let mut service = NetService::new(service_cfg).expect("NetService::new failed");
-    let actual_addr = service.local_addr().expect("local_addr failed");
-
-    // Server thread: call step() in a loop
-    let server_handle = thread::spawn(move || {
-        for _ in 0..1000 {
-            service.step().expect("step failed");
-            if service.peers().len() > 0 {
-                return service;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("Timeout waiting for connection via step()");
-    });
-
-    // Client side: connect
-    let mut client_mgr = PeerManager::new();
-    client_mgr
-        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
-        .expect("client add_outbound_peer failed");
-
-    // Wait for server
     let mut service = server_handle.join().expect("server thread panicked");
-    assert_eq!(service.peers().len(), 1);
+
+    let peer_id = PeerId(1);
+    let timeout = Duration::from_secs(1);
+
+    // 1. Initially, peer should NOT be live (no pong received yet)
+    let live_initial = service
+        .is_peer_live(peer_id, timeout)
+        .expect("is_peer_live failed");
+    assert!(!live_initial, "Peer should not be live initially (no pong)");
+
+    // 2. Set last_pong to now via test helper, peer should be live
+    {
+        let peer = service
+            .peers()
+            .get_peer_mut(peer_id)
+            .expect("peer not found");
+        peer.set_last_pong_for_test(Some(Instant::now()));
+    }
+
+    let live_after_pong = service
+        .is_peer_live(peer_id, timeout)
+        .expect("is_peer_live failed");
+    assert!(live_after_pong, "Peer should be live after recent pong");
+
+    // 3. Set last_pong to an old timestamp (5 seconds ago), peer should NOT be live
+    //    with a 1 second timeout.
+    {
+        let peer = service
+            .peers()
+            .get_peer_mut(peer_id)
+            .expect("peer not found");
+        let old_time = Instant::now() - Duration::from_secs(5);
+        peer.set_last_pong_for_test(Some(old_time));
+    }
+
+    let live_after_old_pong = service
+        .is_peer_live(peer_id, timeout)
+        .expect("is_peer_live failed");
+    assert!(
+        !live_after_old_pong,
+        "Peer should not be live after old pong timestamp"
+    );
 }
