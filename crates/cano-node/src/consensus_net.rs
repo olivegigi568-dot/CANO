@@ -4,11 +4,16 @@
 //! presents a clean API in terms of `Vote` and `BlockProposal` instead of raw
 //! `NetMessage`. This adapter is used by the consensus engine (`cano-consensus`)
 //! in tests and in the node.
+//!
+//! The adapter also implements `cano_consensus::ConsensusNetwork`, allowing
+//! the consensus engine to depend only on an abstract trait rather than
+//! concrete networking types.
 
 use std::io;
 
 use crate::peer::PeerId;
 use crate::peer_manager::{PeerManager, PeerManagerError};
+use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
 use cano_wire::consensus::{BlockProposal, Vote};
 use cano_wire::net::NetMessage;
 
@@ -154,5 +159,61 @@ impl ConsensusNetAdapter {
         };
 
         Ok(event)
+    }
+}
+
+// ============================================================================
+// ConsensusNetwork trait implementation
+// ============================================================================
+
+/// Implementation of the abstract `ConsensusNetwork` trait from `cano-consensus`.
+///
+/// This allows the consensus engine to use `ConsensusNetAdapter` through the
+/// trait interface without depending on node-specific types like `PeerManager`
+/// or `NetMessage`.
+///
+/// # ID Mapping
+///
+/// The trait uses `PeerId` as the `Id` type directly. `PeerId` is a simple
+/// `PeerId(u64)` wrapper defined in `cano-node::peer`. If the consensus crate
+/// needs a different ID type in the future, conversion traits (`From`/`Into`)
+/// can be added to map between them.
+impl ConsensusNetwork for ConsensusNetAdapter {
+    type Id = PeerId;
+
+    fn broadcast_proposal(&mut self, proposal: &BlockProposal) -> Result<(), NetworkError> {
+        // Delegate to the inherent method and map the error
+        ConsensusNetAdapter::broadcast_proposal(self, proposal)
+            .map_err(|e| NetworkError::Other(format!("{:?}", e)))
+    }
+
+    fn broadcast_vote(&mut self, vote: &Vote) -> Result<(), NetworkError> {
+        // Delegate to the inherent method and map the error
+        ConsensusNetAdapter::broadcast_vote(self, vote)
+            .map_err(|e| NetworkError::Other(format!("{:?}", e)))
+    }
+
+    fn send_vote_to(&mut self, to: Self::Id, vote: &Vote) -> Result<(), NetworkError> {
+        // Delegate to the inherent method and map the error
+        ConsensusNetAdapter::send_vote_to(self, to, vote)
+            .map_err(|e| NetworkError::Other(format!("{:?}", e)))
+    }
+
+    fn recv_one(&mut self) -> Result<ConsensusNetworkEvent<Self::Id>, NetworkError> {
+        // Delegate to the inherent method and map the result
+        let event = ConsensusNetAdapter::recv_one(self)
+            .map_err(|e| NetworkError::Other(format!("{:?}", e)))?;
+
+        // Convert node-level ConsensusNetEvent to trait-level ConsensusNetworkEvent
+        let mapped = match event {
+            ConsensusNetEvent::IncomingVote { from, vote } => {
+                ConsensusNetworkEvent::IncomingVote { from, vote }
+            }
+            ConsensusNetEvent::IncomingProposal { from, proposal } => {
+                ConsensusNetworkEvent::IncomingProposal { from, proposal }
+            }
+        };
+
+        Ok(mapped)
     }
 }
