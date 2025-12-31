@@ -10,6 +10,7 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpListener};
+use std::time::Duration;
 
 use crate::peer::PeerId;
 use crate::peer_manager::{PeerManager, PeerManagerError};
@@ -30,6 +31,8 @@ pub enum NetServiceError {
     Channel(ChannelError),
     /// PeerManager error.
     PeerManager(PeerManagerError),
+    /// The service has reached its configured max_peers limit.
+    PeerLimitReached { max: usize },
 }
 
 impl From<io::Error> for NetServiceError {
@@ -68,6 +71,10 @@ pub struct NetServiceConfig {
 
     /// Server-side connection config for KEMTLS.
     pub server_cfg: ServerConnectionConfig,
+
+    /// Maximum number of peers this service will track at once.
+    /// If the limit is reached, new inbound connections are rejected.
+    pub max_peers: usize,
 }
 
 // ============================================================================
@@ -133,10 +140,24 @@ impl NetService {
     /// Returns `Ok(Some(peer_id))` if a new peer was added, `Ok(None)` if no
     /// connection was ready (non-blocking).
     ///
+    /// # Connection Limit
+    ///
+    /// If the current number of peers has reached `max_peers`, this method
+    /// returns `Err(NetServiceError::PeerLimitReached { .. })` immediately
+    /// without accepting new sockets.
+    ///
     /// # Errors
     ///
-    /// Returns `NetServiceError` if the accept or handshake fails.
+    /// Returns `NetServiceError` if the accept or handshake fails, or if the
+    /// peer limit has been reached.
     pub fn accept_one(&mut self) -> Result<Option<PeerId>, NetServiceError> {
+        // Enforce connection limit before accepting a new socket.
+        if self.peers.len() >= self.cfg.max_peers {
+            return Err(NetServiceError::PeerLimitReached {
+                max: self.cfg.max_peers,
+            });
+        }
+
         match self.listener.accept() {
             Ok((stream, _addr)) => {
                 stream.set_nodelay(true)?;
@@ -190,5 +211,17 @@ impl NetService {
         let _ = self.accept_one()?;
         // Future: we could do more here (poll peers, send pings, etc.)
         Ok(())
+    }
+
+    /// Returns true if the given peer is considered live within the given timeout.
+    ///
+    /// This delegates to `PeerManager::is_peer_live`, which checks if the peer
+    /// has responded to a ping within the specified timeout duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetServiceError::PeerManager` if the peer is not found.
+    pub fn is_peer_live(&self, id: PeerId, timeout: Duration) -> Result<bool, NetServiceError> {
+        Ok(self.peers.is_peer_live(id, timeout)?)
     }
 }
