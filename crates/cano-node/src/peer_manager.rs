@@ -12,6 +12,8 @@ use cano_net::{ClientConnectionConfig, ServerConnectionConfig};
 use crate::peer::{Peer, PeerId};
 use crate::secure_channel::{ChannelError, SecureChannel};
 
+use std::time::Duration;
+
 use cano_wire::net::NetMessage;
 
 /// Error type for `PeerManager` operations.
@@ -174,6 +176,64 @@ impl PeerManager {
             io::ErrorKind::WouldBlock,
             "no peer had data ready",
         )))
+    }
+
+    // ========================================================================
+    // Ping/Pong liveness methods
+    // ========================================================================
+
+    /// Send a Ping with the given nonce to all known peers.
+    ///
+    /// If any peer fails, the method returns that error immediately; remaining
+    /// peers are not sent to.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerManagerError::Channel` if sending to any peer fails.
+    pub fn broadcast_ping(&mut self, nonce: u64) -> Result<(), PeerManagerError> {
+        for peer in self.peers.values_mut() {
+            peer.send_ping(nonce).map_err(PeerManagerError::Channel)?;
+        }
+        Ok(())
+    }
+
+    /// Send a Ping to a single peer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerManagerError::PeerNotFound` if no peer with the given ID exists.
+    /// Returns `PeerManagerError::Channel` if the send fails.
+    pub fn ping_peer(&mut self, id: PeerId, nonce: u64) -> Result<(), PeerManagerError> {
+        let peer = self
+            .peers
+            .get_mut(&id)
+            .ok_or(PeerManagerError::PeerNotFound(id))?;
+        peer.send_ping(nonce).map_err(PeerManagerError::Channel)
+    }
+
+    /// Check if a specific peer is live (has responded to a ping within the timeout).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerManagerError::PeerNotFound` if no peer with the given ID exists.
+    pub fn is_peer_live(&self, id: PeerId, timeout: Duration) -> Result<bool, PeerManagerError> {
+        let peer = self
+            .peers
+            .get(&id)
+            .ok_or(PeerManagerError::PeerNotFound(id))?;
+        Ok(peer.is_live(timeout))
+    }
+
+    /// Get a mutable reference to a specific peer.
+    ///
+    /// This is useful for tests that need to call handle_incoming_ping/pong directly.
+    pub fn get_peer_mut(&mut self, id: PeerId) -> Option<&mut Peer> {
+        self.peers.get_mut(&id)
+    }
+
+    /// Get an immutable reference to a specific peer.
+    pub fn get_peer(&self, id: PeerId) -> Option<&Peer> {
+        self.peers.get(&id)
     }
 }
 
