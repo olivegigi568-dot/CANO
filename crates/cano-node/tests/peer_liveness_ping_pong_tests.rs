@@ -467,10 +467,12 @@ fn peer_manager_broadcast_ping_and_pong_liveness() {
 /// For a single Peer, simulate that last_pong was set some time ago (> timeout).
 /// Assert is_live(timeout) returns false.
 ///
-/// Since we can't easily manipulate Instant directly, we use a cfg(test) helper
-/// or just test with a very short timeout after a brief sleep.
+/// Since we can't easily manipulate Instant directly, we use a test helper to
+/// set the timestamp to an older time.
 #[test]
 fn peer_is_not_live_after_timeout() {
+    use std::sync::mpsc;
+
     let setup = create_test_setup();
     let server_cfg = setup.server_cfg;
     let client_cfg = setup.client_cfg;
@@ -480,7 +482,10 @@ fn peer_is_not_live_after_timeout() {
     let addr = listener.local_addr().expect("local_addr failed");
     let addr_str = addr.to_string();
 
-    // Server thread: accepts connection, receives Ping, sends Pong, then waits
+    // Channel to coordinate server shutdown
+    let (client_done_tx, client_done_rx) = mpsc::channel::<()>();
+
+    // Server thread: accepts connection, receives Ping, sends Pong, waits for client signal
     let server_handle = thread::spawn(move || {
         let (stream, _peer_addr) = listener.accept().expect("accept failed");
         let channel =
@@ -494,8 +499,8 @@ fn peer_is_not_live_after_timeout() {
                 .expect("handle_incoming_ping failed");
         }
 
-        // Wait a bit to keep connection open
-        thread::sleep(Duration::from_millis(200));
+        // Wait for client to signal it's done reading
+        client_done_rx.recv().ok();
     });
 
     // Client
@@ -510,6 +515,9 @@ fn peer_is_not_live_after_timeout() {
     if let NetMessage::Pong(nonce) = response {
         client_peer.handle_incoming_pong(nonce);
     }
+
+    // Signal server that client is done reading
+    client_done_tx.send(()).ok();
 
     // Immediately after pong, is_live should be true with a reasonable timeout
     assert!(

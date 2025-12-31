@@ -99,7 +99,10 @@ impl Peer {
 
     /// Handle an incoming Pong and update liveness.
     ///
-    /// For now we don't track nonce; just mark liveness timestamp.
+    /// Note: Currently we don't validate that the nonce matches a sent ping.
+    /// This is intentional for this minimal implementation - we just mark that
+    /// the peer is responsive. Nonce validation can be added later if replay
+    /// protection is needed.
     pub fn handle_incoming_pong(&mut self, _nonce: u64) {
         self.last_pong = Some(Instant::now());
     }
