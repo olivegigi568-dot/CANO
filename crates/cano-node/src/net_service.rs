@@ -201,14 +201,24 @@ impl NetService {
     /// Currently this:
     /// - Accepts at most one inbound connection
     ///
+    /// Note: If the peer limit is reached, this method continues normally
+    /// (the limit is an expected operational state, not an error).
+    ///
     /// Future extensions: poll peers, send pings, etc.
     ///
     /// # Errors
     ///
-    /// Returns `NetServiceError` if any operation fails.
+    /// Returns `NetServiceError` if any operation fails (excluding peer limit).
     pub fn step(&mut self) -> Result<(), NetServiceError> {
         // Accept inbound if any.
-        let _ = self.accept_one()?;
+        // PeerLimitReached is an expected state, not an error for step().
+        match self.accept_one() {
+            Ok(_) => {}
+            Err(NetServiceError::PeerLimitReached { .. }) => {
+                // At capacity - this is fine, continue operating.
+            }
+            Err(e) => return Err(e),
+        }
         // Future: we could do more here (poll peers, send pings, etc.)
         Ok(())
     }
