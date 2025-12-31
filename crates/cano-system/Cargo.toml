@@ -1,0 +1,11 @@
+[package]
+name = "cano-system"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cano-types  = { path = "../cano-types" }
+cano-wire   = { path = "../cano-wire" }
+cano-serde  = { path = "../cano-serde" }
+cano-crypto = { path = "../cano-crypto" }
+cano-ledger = { path = "../cano-ledger" }

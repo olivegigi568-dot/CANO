@@ -1,0 +1,9 @@
+[package]
+name = "cano-hash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cano-types = { path = "../cano-types" }
+cano-wire  = { path = "../cano-wire" }
+sha3       = "0.10"  # for SHA3-256

@@ -1,0 +1,12 @@
+[package]
+name = "cano-net"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cano-crypto = { path = "../cano-crypto" }
+cano-hash   = { path = "../cano-hash" }
+cano-wire   = { path = "../cano-wire" }
+
+sha3 = "0.10"
+hmac = "0.12"
