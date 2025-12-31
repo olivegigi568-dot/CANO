@@ -12,6 +12,16 @@
 //! HotStuff-style locking and commit tracking:
 //! - `HotStuffState`: local consensus state with locking and commit tracking
 //! - `hotstuff_decide_and_maybe_record_vote`: HotStuff-aware voting decision function
+//!
+//! Consensus networking abstraction:
+//! - `ConsensusNetwork`: trait for abstracting network operations
+//! - `ConsensusNetworkEvent`: events received from the network
+//! - `NetworkError`: error type for network operations
+//! - `MockConsensusNetwork`: in-memory mock for testing
+
+pub mod network;
+
+pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
 
 use cano_crypto::CryptoProvider;
 use cano_hash::vote_digest;
