@@ -16,11 +16,13 @@
 //! No networking, no DAG, no signing or IO.
 
 pub mod consensus_net;
+pub mod net_service;
 pub mod peer;
 pub mod peer_manager;
 pub mod secure_channel;
 
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
+pub use net_service::{NetService, NetServiceConfig, NetServiceError};
 pub use peer::{Peer, PeerId};
 pub use peer_manager::{PeerManager, PeerManagerError};
 
