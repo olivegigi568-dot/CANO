@@ -399,8 +399,8 @@ fn adapter_implements_consensus_network_trait_for_vote_broadcast() {
             .add_inbound_peer(PeerId(1), stream, server_cfg)
             .expect("add_inbound_peer failed");
 
-        // Wrap in ConsensusNetAdapter
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Use the adapter through the trait interface
         let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
@@ -424,8 +424,8 @@ fn adapter_implements_consensus_network_trait_for_vote_broadcast() {
         .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
         .expect("add_outbound_peer failed");
 
-    // Wrap in ConsensusNetAdapter
-    let mut adapter = ConsensusNetAdapter::new(peers);
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
     // Use the adapter through the trait interface
     let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
@@ -473,8 +473,8 @@ fn adapter_implements_consensus_network_trait_for_block_proposal_broadcast() {
             .add_inbound_peer(PeerId(10), stream, server_cfg)
             .expect("add_inbound_peer failed");
 
-        // Wrap in ConsensusNetAdapter
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Use the adapter through the trait interface
         let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
@@ -498,8 +498,8 @@ fn adapter_implements_consensus_network_trait_for_block_proposal_broadcast() {
         .add_outbound_peer(PeerId(20), &addr_str, client_cfg)
         .expect("add_outbound_peer failed");
 
-    // Wrap in ConsensusNetAdapter
-    let mut adapter = ConsensusNetAdapter::new(peers);
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
     // Use the adapter through the trait interface
     let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
@@ -552,7 +552,7 @@ fn adapter_implements_consensus_network_trait_for_send_vote_to() {
             .add_inbound_peer(PeerId(100), stream, server_cfg1)
             .expect("add_inbound_peer1 failed");
 
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
         let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
 
         // Try to receive with a short timeout
@@ -575,7 +575,7 @@ fn adapter_implements_consensus_network_trait_for_send_vote_to() {
             .add_inbound_peer(PeerId(200), stream, server_cfg2)
             .expect("add_inbound_peer2 failed");
 
-        let adapter = ConsensusNetAdapter::new(peers);
+        let adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Server 2 won't receive anything since the vote is targeted.
         // Just signal that we're done accepting.
@@ -594,8 +594,8 @@ fn adapter_implements_consensus_network_trait_for_send_vote_to() {
 
     assert_eq!(peers.len(), 2);
 
-    // Wrap in ConsensusNetAdapter
-    let mut adapter = ConsensusNetAdapter::new(peers);
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
     // Use the adapter through the trait interface
     let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;

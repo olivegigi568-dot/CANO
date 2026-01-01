@@ -391,8 +391,8 @@ fn broadcast_vote_roundtrip_to_single_peer() {
             .add_inbound_peer(PeerId(1), stream, server_cfg)
             .expect("add_inbound_peer failed");
 
-        // Wrap in ConsensusNetAdapter
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Receive a vote via recv_one()
         let event = adapter.recv_one().expect("server recv_one failed");
@@ -413,8 +413,8 @@ fn broadcast_vote_roundtrip_to_single_peer() {
         .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
         .expect("add_outbound_peer failed");
 
-    // Wrap in ConsensusNetAdapter
-    let mut adapter = ConsensusNetAdapter::new(peers);
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
     // Broadcast the vote
     adapter
@@ -462,8 +462,8 @@ fn broadcast_block_proposal_to_multiple_peers() {
             .add_inbound_peer(PeerId(10), stream, server_cfg1)
             .expect("add_inbound_peer1 failed");
 
-        // Wrap in ConsensusNetAdapter
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Receive a proposal via recv_one()
         let event = adapter.recv_one().expect("server1 recv_one failed");
@@ -485,8 +485,8 @@ fn broadcast_block_proposal_to_multiple_peers() {
             .add_inbound_peer(PeerId(11), stream, server_cfg2)
             .expect("add_inbound_peer2 failed");
 
-        // Wrap in ConsensusNetAdapter
-        let mut adapter = ConsensusNetAdapter::new(peers);
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
         // Receive a proposal via recv_one()
         let event = adapter.recv_one().expect("server2 recv_one failed");
@@ -511,8 +511,8 @@ fn broadcast_block_proposal_to_multiple_peers() {
 
     assert_eq!(peers.len(), 2);
 
-    // Wrap in ConsensusNetAdapter
-    let mut adapter = ConsensusNetAdapter::new(peers);
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
 
     // Broadcast the BlockProposal to all peers
     adapter
