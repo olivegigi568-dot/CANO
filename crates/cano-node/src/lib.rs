@@ -17,6 +17,7 @@
 
 pub mod consensus_net;
 pub mod consensus_node;
+pub mod consensus_sim;
 pub mod net_service;
 pub mod peer;
 pub mod peer_manager;
@@ -24,6 +25,7 @@ pub mod secure_channel;
 
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
 pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError};
+pub use consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
 pub use net_service::{NetService, NetServiceConfig, NetServiceError};
 pub use peer::{Peer, PeerId};
 pub use peer_manager::{PeerManager, PeerManagerError};
