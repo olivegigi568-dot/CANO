@@ -10,10 +10,21 @@ use crate::secure_channel::{ChannelError, SecureChannel};
 use cano_wire::error::WireError;
 use cano_wire::net::NetMessage;
 
-/// Placeholder peer identifier.
+/// PeerId represents a logical network peer within the node's networking layer.
 ///
-/// This is a temporary stand-in that will later be wired to the real
-/// validator/peer identity (e.g., AccountId or a dedicated ValidatorId type).
+/// It is a transport-level identifier and is *not yet* cryptographically bound
+/// to the validator identity carried inside consensus messages.
+///
+/// A future task will introduce an explicit mapping / binding between `PeerId`
+/// and the canonical `ValidatorId` from `cano-consensus`.
+///
+/// # Design Note
+///
+/// Currently, `PeerId` is assigned locally when peers connect (inbound or outbound).
+/// There is no protocol-level verification that a peer's claimed `PeerId` corresponds
+/// to any specific validator. The `PeerValidatorMap` type in this crate provides
+/// a placeholder for tracking the relationship between transport peers and
+/// consensus-level validator identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u64);
 

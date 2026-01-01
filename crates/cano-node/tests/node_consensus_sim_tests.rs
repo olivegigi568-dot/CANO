@@ -607,3 +607,272 @@ fn node_consensus_sim_processes_block_proposal_event() {
         proposals_received
     );
 }
+
+// ============================================================================
+// Identity Plumbing Tests (T49)
+// ============================================================================
+
+/// Test that PeerValidatorMap correctly maps PeerId to ValidatorId.
+///
+/// This test verifies that:
+/// - The mapping can be pre-populated
+/// - The mapping can be queried after setup
+#[test]
+fn peer_validator_map_basic_mapping() {
+    use cano_consensus::ValidatorId;
+    use cano_node::identity_map::PeerValidatorMap;
+    use cano_node::peer::PeerId;
+
+    let mut map = PeerValidatorMap::new();
+
+    // Set up a mapping for two nodes
+    let peer1 = PeerId(100);
+    let peer2 = PeerId(200);
+    let val1 = ValidatorId::new(1);
+    let val2 = ValidatorId::new(2);
+
+    map.insert(peer1, val1);
+    map.insert(peer2, val2);
+
+    // Verify the mapping
+    assert_eq!(map.get(&peer1), Some(val1));
+    assert_eq!(map.get(&peer2), Some(val2));
+    assert_eq!(map.get(&PeerId(999)), None);
+}
+
+/// Test that ConsensusNode can be created with a pre-populated PeerValidatorMap.
+#[test]
+fn consensus_node_with_id_map_constructor() {
+    use cano_consensus::ValidatorId;
+    use cano_node::identity_map::PeerValidatorMap;
+    use cano_node::peer::PeerId;
+    use std::net::SocketAddr;
+
+    let setup = create_test_setup();
+
+    // Create a pre-populated identity map
+    let mut id_map = PeerValidatorMap::new();
+    id_map.insert(PeerId(100), ValidatorId::new(1));
+    id_map.insert(PeerId(200), ValidatorId::new(2));
+
+    // Create NetServiceConfig
+    let listen_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: setup.client_cfg,
+        server_cfg: setup.server_cfg,
+        max_peers: 4,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and ConsensusNode with pre-populated id_map
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let node = ConsensusNode::with_id_map(net_service, id_map);
+
+    // Verify the mapping is accessible
+    assert_eq!(
+        node.get_validator_for_peer(&PeerId(100)),
+        Some(ValidatorId::new(1))
+    );
+    assert_eq!(
+        node.get_validator_for_peer(&PeerId(200)),
+        Some(ValidatorId::new(2))
+    );
+    assert_eq!(node.get_validator_for_peer(&PeerId(999)), None);
+}
+
+/// Test that ConsensusNode can register peer-validator mappings dynamically.
+#[test]
+fn consensus_node_register_peer_validator() {
+    use cano_consensus::ValidatorId;
+    use cano_node::peer::PeerId;
+    use std::net::SocketAddr;
+
+    let setup = create_test_setup();
+
+    // Create NetServiceConfig
+    let listen_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: setup.client_cfg,
+        server_cfg: setup.server_cfg,
+        max_peers: 4,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let mut node = ConsensusNode::new(net_service);
+
+    // Verify no mapping initially
+    assert_eq!(node.get_validator_for_peer(&PeerId(100)), None);
+
+    // Register a mapping dynamically
+    node.register_peer_validator(PeerId(100), ValidatorId::new(42));
+
+    // Verify the mapping is now present
+    assert_eq!(
+        node.get_validator_for_peer(&PeerId(100)),
+        Some(ValidatorId::new(42))
+    );
+}
+
+/// Test that when processing an IncomingVote event, we can look up the ValidatorId
+/// for the sender's PeerId using the identity map.
+///
+/// This test verifies the identity plumbing is in place and usable, even though
+/// runtime enforcement is not yet implemented.
+#[test]
+fn consensus_node_identity_map_lookup_on_incoming_vote() {
+    use cano_consensus::ValidatorId;
+    use cano_node::peer::PeerId;
+    use std::net::SocketAddr;
+    use std::sync::mpsc;
+
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Create a vote to send
+    let mut vote = make_dummy_vote();
+    // Set validator_index to match the ValidatorId we'll map to the client peer
+    vote.validator_index = 42;
+
+    // Note: The actual PeerId is assigned by the server when it accepts the connection.
+    // In a real scenario, we'd populate this mapping during handshake or from config.
+    // For this test, we register the mapping after the connection is established.
+
+    // Create NetServiceConfig for the server side
+    let listen_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 4,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = net_service.local_addr().expect("local_addr failed");
+
+    // We use a default map here; in a real scenario, we'd populate it during handshake
+    let mut node = ConsensusNode::new(net_service);
+
+    // Use channels to coordinate
+    let (server_ready_tx, server_ready_rx) = mpsc::channel::<PeerId>();
+    let (vote_sent_tx, vote_sent_rx) = mpsc::channel::<()>();
+
+    // Server thread
+    let server_handle = thread::spawn(move || {
+        // Step until we have a connection
+        let mut connected_peer: Option<PeerId> = None;
+        for _ in 0..1000 {
+            node.step_network().expect("step_network failed");
+            if node.net_service().peers().len() > 0 {
+                // Get the connected peer's ID
+                let peers: Vec<PeerId> = node
+                    .net_service()
+                    .peers()
+                    .iter_ids()
+                    .collect();
+                if !peers.is_empty() {
+                    connected_peer = Some(peers[0]);
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let peer_id = connected_peer.expect("No peer connected");
+
+        // Now register the peer-validator mapping
+        // This simulates what would happen after a verified handshake
+        node.register_peer_validator(peer_id, ValidatorId::new(42));
+
+        // Signal that server is ready, sending the peer_id
+        server_ready_tx
+            .send(peer_id)
+            .expect("failed to send server ready signal");
+
+        // Wait for the vote to be sent
+        vote_sent_rx
+            .recv()
+            .expect("failed to receive vote sent signal");
+
+        // Process incoming events until we receive the vote
+        for _ in 0..100 {
+            if let Ok(Some(event)) = node.step_and_try_recv_event() {
+                if let cano_consensus::ConsensusNetworkEvent::IncomingVote { from, vote: v } = event
+                {
+                    // Look up the ValidatorId for the sender
+                    let validator_id = node.get_validator_for_peer(&from);
+
+                    // Return the info for assertion
+                    return (
+                        from,
+                        validator_id,
+                        v.validator_index,
+                    );
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        panic!("Did not receive vote event");
+    });
+
+    // Client side
+    let mut client_peers = PeerManager::new();
+    client_peers
+        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
+        .expect("client add_outbound_peer failed");
+
+    // Wait for server to be ready and get the peer_id it assigned to us
+    let _ = server_ready_rx
+        .recv()
+        .expect("failed to receive server ready signal");
+
+    // Send the vote
+    {
+        let mut adapter = ConsensusNetAdapter::new(&mut client_peers);
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+        net.broadcast_vote(&vote).expect("client broadcast_vote failed");
+    }
+
+    // Signal that the vote has been sent
+    vote_sent_tx
+        .send(())
+        .expect("failed to send vote sent signal");
+
+    // Wait for server to complete and get the results
+    let (from_peer, mapped_validator, vote_validator_index) =
+        server_handle.join().expect("server thread panicked");
+
+    // Verify the identity mapping is correct
+    assert!(
+        mapped_validator.is_some(),
+        "Expected ValidatorId to be mapped for peer {:?}",
+        from_peer
+    );
+
+    let mapped_val = mapped_validator.unwrap();
+    assert_eq!(
+        mapped_val,
+        ValidatorId::new(42),
+        "Mapped ValidatorId should be 42"
+    );
+
+    // The vote's validator_index should match the mapped ValidatorId
+    assert_eq!(
+        vote_validator_index as u64,
+        mapped_val.as_u64(),
+        "vote.validator_index should match the mapped ValidatorId"
+    );
+}

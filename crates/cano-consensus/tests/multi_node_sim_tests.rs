@@ -3,6 +3,10 @@
 //! These tests verify that `MultiNodeSim` correctly wires multiple nodes together:
 //! - Broadcasts and sends are delivered to the appropriate other nodes' inbound queues.
 //! - No real network or cano-node is used.
+//!
+//! Additionally, T49 identity consistency tests verify that:
+//! - The network-level `from` field matches the consensus-level validator identity
+//! - When using `ValidatorId` as the network Id type, identity is consistently tracked
 
 use cano_consensus::{
     ConsensusEngineAction, ConsensusEngineDriver, ConsensusNetworkEvent, MockConsensusNetwork,
@@ -415,4 +419,260 @@ fn multi_node_sim_multi_step_propagation() {
     assert_eq!(sim.nets.get(&1).unwrap().inbound.len(), 2);
     assert_eq!(sim.nets.get(&2).unwrap().inbound.len(), 1);
     assert_eq!(sim.nets.get(&3).unwrap().inbound.len(), 1);
+}
+
+// ============================================================================
+// Identity Consistency Tests (T49)
+// ============================================================================
+
+/// Test that when using ValidatorId as the network Id type, the `from` field
+/// in ConsensusNetworkEvent matches the node's own ValidatorId for honest nodes.
+///
+/// Scenario:
+/// - 3 nodes with ValidatorId(1), ValidatorId(2), ValidatorId(3)
+/// - Node 1 receives a proposal and broadcasts a vote
+/// - Verify the vote's embedded from matches the node's ValidatorId
+#[test]
+fn multi_node_sim_validator_ids_match_network_ids() {
+    use cano_consensus::ValidatorId;
+
+    // Create 3 nodes with ValidatorId as the network Id type
+    let mut net1: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net2: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net3: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    let val1 = ValidatorId::new(1);
+    let val2 = ValidatorId::new(2);
+    let val3 = ValidatorId::new(3);
+
+    // Insert an IncomingProposal into node 1's inbound queue
+    // For honest nodes, the `from` should match the actual sender's ValidatorId
+    let dummy_proposal = make_dummy_proposal(1, 0);
+    net1.inbound.push_back(ConsensusNetworkEvent::IncomingProposal {
+        from: val2, // Proposal from validator 2
+        proposal: dummy_proposal.clone(),
+    });
+
+    // Create a driver for ValidatorId
+    let driver1 = ValidatorIdTestDriver::new(val1);
+    let driver2 = ValidatorIdTestDriver::new(val2);
+    let driver3 = ValidatorIdTestDriver::new(val3);
+
+    // Create the simulation with ValidatorId as the Id type
+    let nodes = vec![
+        (val1, net1, driver1),
+        (val2, net2, driver2),
+        (val3, net3, driver3),
+    ];
+    let mut sim = MultiNodeSim::new(nodes);
+
+    // Run one step
+    sim.step_once().unwrap();
+
+    // After step, node 1's driver should have processed 1 proposal
+    assert_eq!(sim.drivers.get(&val1).unwrap().proposals_received, 1);
+
+    // Nodes 2 and 3 should have received the vote from node 1
+    assert_eq!(sim.nets.get(&val2).unwrap().inbound.len(), 1);
+    assert_eq!(sim.nets.get(&val3).unwrap().inbound.len(), 1);
+
+    // Verify the vote came from node 1 (ValidatorId(1))
+    let event2 = sim.nets.get(&val2).unwrap().inbound.front().unwrap();
+    match event2 {
+        ConsensusNetworkEvent::IncomingVote { from, vote } => {
+            // The `from` field should be ValidatorId(1) - the sender
+            assert_eq!(*from, val1, "vote 'from' should match sender's ValidatorId");
+            // The vote's validator_index is a u16 in the wire format,
+            // but we can verify it was set to match the sender's id (at least conceptually)
+            // For this test, we configured the driver to emit votes with matching index
+            assert_eq!(
+                vote.validator_index as u64,
+                val1.as_u64(),
+                "vote.validator_index should match the ValidatorId"
+            );
+        }
+        _ => panic!("Expected IncomingVote"),
+    }
+
+    let event3 = sim.nets.get(&val3).unwrap().inbound.front().unwrap();
+    match event3 {
+        ConsensusNetworkEvent::IncomingVote { from, vote } => {
+            assert_eq!(*from, val1, "vote 'from' should match sender's ValidatorId");
+            assert_eq!(
+                vote.validator_index as u64,
+                val1.as_u64(),
+                "vote.validator_index should match the ValidatorId"
+            );
+        }
+        _ => panic!("Expected IncomingVote"),
+    }
+}
+
+/// Test that ConsensusEngineAction::BroadcastVote produced by a driver
+/// results in votes where the validator_index matches the node's own ValidatorId.
+#[test]
+fn multi_node_sim_broadcast_vote_validator_index_matches_sender_id() {
+    use cano_consensus::ValidatorId;
+
+    let mut net1: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net2: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    let val1 = ValidatorId::new(42);
+    let val2 = ValidatorId::new(99);
+
+    // Insert a proposal to trigger node 1 to broadcast a vote
+    let dummy_proposal = make_dummy_proposal(1, 0);
+    net1.inbound.push_back(ConsensusNetworkEvent::IncomingProposal {
+        from: val2,
+        proposal: dummy_proposal,
+    });
+
+    // Create drivers that emit votes with validator_index matching their own ValidatorId
+    let driver1 = ValidatorIdTestDriver::new(val1);
+    let driver2 = ValidatorIdTestDriver::new(val2);
+
+    let nodes = vec![(val1, net1, driver1), (val2, net2, driver2)];
+    let mut sim = MultiNodeSim::new(nodes);
+
+    sim.step_once().unwrap();
+
+    // Node 2 should have received a vote from node 1
+    assert_eq!(sim.nets.get(&val2).unwrap().inbound.len(), 1);
+
+    let event = sim.nets.get(&val2).unwrap().inbound.front().unwrap();
+    if let ConsensusNetworkEvent::IncomingVote { from, vote } = event {
+        assert_eq!(*from, val1);
+        assert_eq!(
+            vote.validator_index as u64,
+            val1.as_u64(),
+            "validator_index should equal the sender's ValidatorId"
+        );
+    } else {
+        panic!("Expected IncomingVote");
+    }
+}
+
+/// Test that IncomingVote events maintain identity consistency:
+/// when we enqueue a vote with a specific `from` and `vote.validator_index`,
+/// they should match for honest nodes.
+#[test]
+fn multi_node_sim_incoming_vote_identity_consistency() {
+    use cano_consensus::ValidatorId;
+
+    let mut net1: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    let val1 = ValidatorId::new(1);
+    let val2 = ValidatorId::new(2);
+
+    // Create a vote where validator_index matches the sender's id
+    let mut vote = make_dummy_vote(1, 0);
+    vote.validator_index = val2.as_u64() as u16; // Vote from validator 2
+
+    // Enqueue with matching from
+    net1.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
+        from: val2,
+        vote: vote.clone(),
+    });
+
+    let driver1 = ValidatorIdTestDriver::new(val1);
+
+    let nodes = vec![(val1, net1, driver1)];
+    let mut sim = MultiNodeSim::new(nodes);
+
+    // The simulation receives the event
+    sim.step_once().unwrap();
+
+    // Verify the driver received exactly 1 vote
+    assert_eq!(sim.drivers.get(&val1).unwrap().votes_received, 1);
+
+    // Verify the last received vote had matching from and validator_index
+    let last_from = sim.drivers.get(&val1).unwrap().last_vote_from;
+    let last_index = sim.drivers.get(&val1).unwrap().last_vote_validator_index;
+
+    assert_eq!(last_from, Some(val2), "last_vote_from should be val2");
+    assert_eq!(
+        last_index,
+        Some(val2.as_u64() as u16),
+        "last_vote_validator_index should equal val2's id"
+    );
+
+    // The key invariant: from.as_u64() == vote.validator_index for honest nodes
+    assert_eq!(
+        last_from.unwrap().as_u64(),
+        last_index.unwrap() as u64,
+        "from and validator_index should match for honest nodes"
+    );
+}
+
+// ============================================================================
+// ValidatorIdTestDriver - A driver that works with ValidatorId
+// ============================================================================
+
+/// A test driver that uses `ValidatorId` as the network Id type.
+/// It broadcasts votes with `validator_index` set to match its own `ValidatorId`.
+#[derive(Debug, Default)]
+struct ValidatorIdTestDriver {
+    /// This driver's own ValidatorId
+    own_id: cano_consensus::ValidatorId,
+    /// Number of votes received
+    votes_received: u64,
+    /// Number of proposals received
+    proposals_received: u64,
+    /// Last vote's `from` field
+    last_vote_from: Option<cano_consensus::ValidatorId>,
+    /// Last vote's `validator_index` field
+    last_vote_validator_index: Option<u16>,
+}
+
+impl ValidatorIdTestDriver {
+    fn new(own_id: cano_consensus::ValidatorId) -> Self {
+        ValidatorIdTestDriver {
+            own_id,
+            votes_received: 0,
+            proposals_received: 0,
+            last_vote_from: None,
+            last_vote_validator_index: None,
+        }
+    }
+}
+
+impl ConsensusEngineDriver<MockConsensusNetwork<cano_consensus::ValidatorId>>
+    for ValidatorIdTestDriver
+{
+    fn step(
+        &mut self,
+        _net: &mut MockConsensusNetwork<cano_consensus::ValidatorId>,
+        maybe_event: Option<ConsensusNetworkEvent<cano_consensus::ValidatorId>>,
+    ) -> Result<Vec<ConsensusEngineAction<cano_consensus::ValidatorId>>, NetworkError> {
+        let mut actions = Vec::new();
+
+        if let Some(event) = maybe_event {
+            match event {
+                ConsensusNetworkEvent::IncomingVote { from, vote } => {
+                    self.votes_received += 1;
+                    self.last_vote_from = Some(from);
+                    self.last_vote_validator_index = Some(vote.validator_index);
+                    actions.push(ConsensusEngineAction::Noop);
+                }
+                ConsensusNetworkEvent::IncomingProposal { .. } => {
+                    self.proposals_received += 1;
+                    // Create a vote with validator_index matching our own ValidatorId
+                    let vote = Vote {
+                        version: 1,
+                        chain_id: 1,
+                        height: 1,
+                        round: 0,
+                        step: 0,
+                        block_id: [0u8; 32],
+                        validator_index: self.own_id.as_u64() as u16,
+                        reserved: 0,
+                        signature: vec![],
+                    };
+                    actions.push(ConsensusEngineAction::BroadcastVote(vote));
+                }
+            }
+        }
+
+        Ok(actions)
+    }
 }
