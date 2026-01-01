@@ -51,13 +51,7 @@ where
     pub fn new(net: MockConsensusNetwork<Id>, driver: D) -> Self {
         SingleNodeSim { net, driver }
     }
-}
 
-impl<Id, D> SingleNodeSim<Id, D>
-where
-    Id: Clone,
-    D: ConsensusEngineDriver<MockConsensusNetwork<Id>>,
-{
     /// One iteration of the single-node simulation:
     /// - Poll the network for a single event (non-blocking).
     /// - Ask the driver to process that event and produce actions.

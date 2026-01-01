@@ -136,8 +136,9 @@ fn single_node_sim_no_event_is_noop() {
     // 3. Wrap into SingleNodeSim
     let mut sim = SingleNodeSim::new(net, driver);
 
-    // 4. Call step_once() a few times
-    for _ in 0..5 {
+    // 4. Call step_once() a few times to verify it doesn't change state
+    const ITERATIONS: usize = 5;
+    for _ in 0..ITERATIONS {
         sim.step_once().unwrap();
     }
 
@@ -156,7 +157,7 @@ fn single_node_sim_processes_multiple_events_in_sequence() {
     // Create a MockConsensusNetwork<u64> with multiple events
     let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
 
-    // Enqueue multiple events
+    // Enqueue multiple events (3 votes + 1 proposal = 4 total)
     net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
         from: 1,
         vote: make_dummy_vote(1, 0),
@@ -175,14 +176,15 @@ fn single_node_sim_processes_multiple_events_in_sequence() {
         vote: make_dummy_vote(2, 0),
     });
 
+    let num_events = net.inbound.len();
+
     // Create driver and sim
     let engine = HotStuffState::new_at_height(1);
     let driver = HotStuffDriver::new(engine);
     let mut sim = SingleNodeSim::new(net, driver);
 
-    // Process all events by calling step_once() until inbound is empty
-    // We know there are 4 events
-    for _ in 0..4 {
+    // Process all events by calling step_once() for each enqueued event
+    for _ in 0..num_events {
         sim.step_once().unwrap();
     }
 
