@@ -28,10 +28,12 @@
 //! - `SingleNodeSim`: minimal harness for testing consensus with MockConsensusNetwork
 
 pub mod driver;
+pub mod multi_sim;
 pub mod network;
 pub mod sim;
 
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver};
+pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
 pub use sim::SingleNodeSim;
 
