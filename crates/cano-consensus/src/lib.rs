@@ -40,7 +40,7 @@ pub mod sim;
 pub mod validator_set;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
-pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver};
+pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, ToValidatorId, ValidatorContext};
 pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};

@@ -676,3 +676,164 @@ impl ConsensusEngineDriver<MockConsensusNetwork<cano_consensus::ValidatorId>>
         Ok(actions)
     }
 }
+
+// ============================================================================
+// Validator Set Enforcement Tests (T51)
+// ============================================================================
+
+/// Test that MultiNodeSim with ValidatorContext rejects votes from non-member nodes.
+///
+/// Scenario:
+/// - Build a ConsensusValidatorSet with nodes 1, 2, 3.
+/// - Add a 4th node with id 999 as a "byzantine" node that sends votes,
+///   but do not include it in the validator set used by the drivers.
+/// - Run MultiNodeSim for a few steps with that byzantine node broadcasting votes.
+/// - Assert that honest nodes' drivers do not count those votes as valid.
+#[test]
+fn multi_node_sim_ignores_votes_from_non_members() {
+    use cano_consensus::{
+        ConsensusNetworkEvent,
+        ConsensusValidatorSet, HotStuffDriver, HotStuffState, MockConsensusNetwork,
+        MultiNodeSim, ValidatorContext, ValidatorId, ValidatorSetEntry,
+    };
+
+    // Create a validator set with nodes 1, 2, 3 (NOT 999)
+    let validators = vec![
+        ValidatorSetEntry { id: ValidatorId::new(1), voting_power: 10 },
+        ValidatorSetEntry { id: ValidatorId::new(2), voting_power: 10 },
+        ValidatorSetEntry { id: ValidatorId::new(3), voting_power: 10 },
+    ];
+    let validator_set = ConsensusValidatorSet::new(validators).expect("should succeed");
+
+    // Create networks and drivers for honest nodes (1, 2, 3)
+    let net1: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net2: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net3: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    let ctx1 = ValidatorContext::new(validator_set.clone());
+    let ctx2 = ValidatorContext::new(validator_set.clone());
+    let ctx3 = ValidatorContext::new(validator_set.clone());
+
+    let driver1 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
+    let driver2 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
+    let driver3 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
+
+    // Create the simulation with honest nodes
+    let nodes = vec![
+        (ValidatorId::new(1), net1, driver1),
+        (ValidatorId::new(2), net2, driver2),
+        (ValidatorId::new(3), net3, driver3),
+    ];
+    let mut sim = MultiNodeSim::new(nodes);
+
+    // Manually inject a vote from the byzantine node (999) into each honest node's inbound queue
+    let byzantine_vote = Vote {
+        version: 1,
+        chain_id: 1,
+        height: 1,
+        round: 0,
+        step: 0,
+        block_id: [0u8; 32],
+        validator_index: 999, // Byzantine validator
+        reserved: 0,
+        signature: vec![],
+    };
+
+    // Inject byzantine votes into all honest nodes' networks
+    for (_, net) in sim.nets.iter_mut() {
+        net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
+            from: ValidatorId::new(999), // Byzantine node
+            vote: byzantine_vote.clone(),
+        });
+    }
+
+    // Run a step to process the byzantine votes
+    sim.step_once().unwrap();
+
+    // Assert that honest nodes did not count the byzantine votes as valid
+    for (id, driver) in sim.drivers.iter() {
+        assert_eq!(
+            driver.votes_received(),
+            0,
+            "Node {:?} should not accept votes from non-member 999",
+            id
+        );
+        assert_eq!(
+            driver.rejected_votes(),
+            1,
+            "Node {:?} should reject votes from non-member 999",
+            id
+        );
+    }
+}
+
+/// Test that MultiNodeSim with ValidatorContext accepts votes from member nodes.
+#[test]
+fn multi_node_sim_accepts_votes_from_members() {
+    use cano_consensus::{
+        ConsensusNetworkEvent, ConsensusValidatorSet, HotStuffDriver, HotStuffState,
+        MockConsensusNetwork, MultiNodeSim, ValidatorContext, ValidatorId, ValidatorSetEntry,
+    };
+
+    // Create a validator set with nodes 1, 2, 3
+    let validators = vec![
+        ValidatorSetEntry { id: ValidatorId::new(1), voting_power: 10 },
+        ValidatorSetEntry { id: ValidatorId::new(2), voting_power: 10 },
+        ValidatorSetEntry { id: ValidatorId::new(3), voting_power: 10 },
+    ];
+    let validator_set = ConsensusValidatorSet::new(validators).expect("should succeed");
+
+    // Create networks and drivers for honest nodes (1, 2, 3)
+    let net1: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let mut net2: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+    let net3: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    let ctx1 = ValidatorContext::new(validator_set.clone());
+    let ctx2 = ValidatorContext::new(validator_set.clone());
+    let ctx3 = ValidatorContext::new(validator_set.clone());
+
+    let driver1 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
+    let driver2 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
+    let driver3 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
+
+    // Inject a vote from a valid member (node 1) into node 2's inbound queue
+    let valid_vote = Vote {
+        version: 1,
+        chain_id: 1,
+        height: 1,
+        round: 0,
+        step: 0,
+        block_id: [0u8; 32],
+        validator_index: 1,
+        reserved: 0,
+        signature: vec![],
+    };
+    net2.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(1), // Valid member
+        vote: valid_vote,
+    });
+
+    // Create the simulation with honest nodes
+    let nodes = vec![
+        (ValidatorId::new(1), net1, driver1),
+        (ValidatorId::new(2), net2, driver2),
+        (ValidatorId::new(3), net3, driver3),
+    ];
+    let mut sim = MultiNodeSim::new(nodes);
+
+    // Run a step to process the vote
+    sim.step_once().unwrap();
+
+    // Assert that node 2 accepted the vote from node 1
+    let driver2 = sim.drivers.get(&ValidatorId::new(2)).unwrap();
+    assert_eq!(
+        driver2.votes_received(),
+        1,
+        "Node 2 should accept votes from member node 1"
+    );
+    assert_eq!(
+        driver2.rejected_votes(),
+        0,
+        "Node 2 should not reject votes from member node 1"
+    );
+}

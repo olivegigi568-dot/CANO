@@ -192,3 +192,111 @@ fn single_node_sim_processes_multiple_events_in_sequence() {
     assert_eq!(sim.driver.votes_received(), 3);
     assert_eq!(sim.driver.proposals_received(), 1);
 }
+
+// ============================================================================
+// Validator Set Enforcement Tests (T51)
+// ============================================================================
+
+/// Test that SingleNodeSim with ValidatorContext rejects votes from unknown validators.
+///
+/// Scenario:
+/// 1. Create a ConsensusValidatorSet with one validator: ValidatorId(1).
+/// 2. Build HotStuffDriver with ValidatorContext of that set.
+/// 3. Create a MockConsensusNetwork<ValidatorId>.
+/// 4. Enqueue an IncomingVote from ValidatorId(2) with a Vote.
+/// 5. Run step_once().
+/// 6. Assert that:
+///    - The engine's "accepted vote" counter did not increase.
+///    - The driver's "rejected votes" counter increased.
+#[test]
+fn single_node_sim_rejects_vote_from_unknown_validator() {
+    use cano_consensus::{ConsensusValidatorSet, ValidatorContext, ValidatorId, ValidatorSetEntry};
+
+    // Create a validator set with only validator 1
+    let validators = vec![ValidatorSetEntry {
+        id: ValidatorId::new(1),
+        voting_power: 10,
+    }];
+    let set = ConsensusValidatorSet::new(validators).expect("should succeed");
+    let ctx = ValidatorContext::new(set);
+
+    // Create a MockConsensusNetwork<ValidatorId>
+    let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    // Enqueue an IncomingVote from an unknown validator (ValidatorId(2))
+    let vote = make_dummy_vote(1, 0);
+    net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(2), // Not in validator set
+        vote,
+    });
+
+    // Create driver with validator context
+    let engine = HotStuffState::new_at_height(1);
+    let driver = HotStuffDriver::with_validators(engine, ctx);
+    let mut sim = SingleNodeSim::new(net, driver);
+
+    // Run step_once()
+    sim.step_once().unwrap();
+
+    // Assert vote was rejected, not accepted
+    assert_eq!(
+        sim.driver.votes_received(),
+        0,
+        "Vote from unknown validator should not be accepted"
+    );
+    assert_eq!(
+        sim.driver.rejected_votes(),
+        1,
+        "Vote from unknown validator should be rejected"
+    );
+}
+
+/// Test that SingleNodeSim with ValidatorContext accepts votes from known validators.
+#[test]
+fn single_node_sim_accepts_vote_from_known_validator() {
+    use cano_consensus::{ConsensusValidatorSet, ValidatorContext, ValidatorId, ValidatorSetEntry};
+
+    // Create a validator set with validator 1 and 2
+    let validators = vec![
+        ValidatorSetEntry {
+            id: ValidatorId::new(1),
+            voting_power: 10,
+        },
+        ValidatorSetEntry {
+            id: ValidatorId::new(2),
+            voting_power: 20,
+        },
+    ];
+    let set = ConsensusValidatorSet::new(validators).expect("should succeed");
+    let ctx = ValidatorContext::new(set);
+
+    // Create a MockConsensusNetwork<ValidatorId>
+    let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    // Enqueue an IncomingVote from a known validator (ValidatorId(1))
+    let vote = make_dummy_vote(1, 0);
+    net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(1), // In validator set
+        vote,
+    });
+
+    // Create driver with validator context
+    let engine = HotStuffState::new_at_height(1);
+    let driver = HotStuffDriver::with_validators(engine, ctx);
+    let mut sim = SingleNodeSim::new(net, driver);
+
+    // Run step_once()
+    sim.step_once().unwrap();
+
+    // Assert vote was accepted
+    assert_eq!(
+        sim.driver.votes_received(),
+        1,
+        "Vote from known validator should be accepted"
+    );
+    assert_eq!(
+        sim.driver.rejected_votes(),
+        0,
+        "Vote from known validator should not be rejected"
+    );
+}
