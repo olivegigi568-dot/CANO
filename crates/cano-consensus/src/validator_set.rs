@@ -1,6 +1,6 @@
 //! Validator set abstraction for consensus.
 //!
-//! This module provides `ValidatorSetEntry` and `ConsensusValidatorSet` types for 
+//! This module provides `ValidatorSetEntry` and `ConsensusValidatorSet` types for
 //! representing the validator committee in the consensus layer.
 //!
 //! # Design Note
