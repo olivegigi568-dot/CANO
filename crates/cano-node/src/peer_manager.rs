@@ -235,6 +235,24 @@ impl PeerManager {
     pub fn get_peer(&self, id: PeerId) -> Option<&Peer> {
         self.peers.get(&id)
     }
+
+    /// Returns an iterator over all currently known peer IDs.
+    pub fn iter_ids(&self) -> impl Iterator<Item = PeerId> + '_ {
+        self.peers.keys().copied()
+    }
+
+    /// Remove a peer from the manager.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerManagerError::PeerNotFound` if no peer with the given ID exists.
+    pub fn remove_peer(&mut self, id: PeerId) -> Result<(), PeerManagerError> {
+        if self.peers.remove(&id).is_some() {
+            Ok(())
+        } else {
+            Err(PeerManagerError::PeerNotFound(id))
+        }
+    }
 }
 
 impl Default for PeerManager {

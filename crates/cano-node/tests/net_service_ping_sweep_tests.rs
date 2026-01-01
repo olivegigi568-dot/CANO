@@ -1,13 +1,12 @@
-//! Integration tests for NetService.
+//! Integration tests for NetService ping sweep and dead peer pruning.
 //!
-//! These tests exercise the full path:
-//!  - NetService binding and accepting connections
-//!  - NetService connecting to outbound peers
-//!  - PeerManager integration
+//! These tests exercise:
+//!  - Periodic ping broadcasting based on ping_interval
+//!  - Dead peer pruning based on liveness_timeout
 
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cano_crypto::{AeadSuite, CryptoError, KemSuite, SignatureSuite, StaticCryptoProvider};
 use cano_net::{
@@ -20,7 +19,7 @@ use cano_wire::io::WireEncode;
 use cano_wire::net::{NetMessage, NetworkDelegationCert};
 
 // ============================================================================
-// Dummy Implementations for Testing (same as in other tests)
+// Dummy Implementations for Testing (same as in other test files)
 // ============================================================================
 
 /// A DummyKem that produces deterministic shared secrets based on pk/sk.
@@ -292,235 +291,216 @@ fn create_test_setup() -> TestSetup {
 }
 
 // ============================================================================
-// NetService Smoke Tests
+// Ping Sweep Tests
 // ============================================================================
 
-/// Test that NetService can accept an inbound peer connection.
+/// Test 5.1: net_service_broadcasts_ping_on_interval
+///
+/// Verifies that NetService broadcasts Ping messages to all peers when
+/// step() is called after the ping_interval has elapsed.
 #[test]
-fn net_service_accepts_inbound_peer() {
+fn net_service_broadcasts_ping_on_interval() {
     let setup = create_test_setup();
     let server_cfg = setup.server_cfg;
     let client_cfg = setup.client_cfg;
 
-    // Create NetServiceConfig for the server side
+    // Create NetServiceConfig with a short ping interval
     let listen_addr = "127.0.0.1:0".parse().unwrap();
     let service_cfg = NetServiceConfig {
         listen_addr,
         outbound_peers: vec![],
         client_cfg: client_cfg.clone(),
         server_cfg,
-        max_peers: 100,
-        ping_interval: Duration::from_millis(50),
-        liveness_timeout: Duration::from_millis(200),
-    };
-
-    // Create NetService
-    let mut service = NetService::new(service_cfg).expect("NetService::new failed");
-    let actual_addr = service.local_addr().expect("local_addr failed");
-
-    // Server thread: run accept_one in a loop until we get a peer
-    let server_handle = thread::spawn(move || {
-        // Try accept_one until we get a peer (with a timeout via loop limit)
-        for _ in 0..1000 {
-            match service.accept_one() {
-                Ok(Some(peer_id)) => {
-                    // Got a peer!
-                    assert_eq!(service.peers().len(), 1);
-                    return (service, peer_id);
-                }
-                Ok(None) => {
-                    // No connection yet, sleep briefly and try again
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(e) => panic!("accept_one failed: {:?}", e),
-            }
-        }
-        panic!("Timeout waiting for inbound connection");
-    });
-
-    // Client side: use PeerManager to connect
-    let mut client_mgr = PeerManager::new();
-    client_mgr
-        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
-        .expect("client add_outbound_peer failed");
-
-    assert_eq!(client_mgr.len(), 1);
-
-    // Wait for server to accept
-    let (mut service, peer_id) = server_handle.join().expect("server thread panicked");
-
-    // Verify we got a peer ID
-    assert_eq!(peer_id, PeerId(1));
-    assert_eq!(service.peers().len(), 1);
-
-    // Optionally verify communication works by exchanging a ping/pong
-    // Client sends ping
-    client_mgr
-        .send_to(PeerId(100), &NetMessage::Ping(42))
-        .expect("client send_to failed");
-
-    // Server receives and responds
-    let (recv_id, msg) = service
-        .peers()
-        .recv_from_any()
-        .expect("server recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Ping(42));
-
-    service
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Pong(42))
-        .expect("server send_to failed");
-
-    // Client receives pong
-    let (recv_id, msg) = client_mgr
-        .recv_from_any()
-        .expect("client recv_from_any failed");
-    assert_eq!(recv_id, PeerId(100));
-    assert_eq!(msg, NetMessage::Pong(42));
-}
-
-/// Test that NetService can connect to outbound peers from config.
-#[test]
-fn net_service_connects_outbound_peers_from_config() {
-    let setup = create_test_setup();
-    let server_cfg = setup.server_cfg;
-    let client_cfg = setup.client_cfg;
-
-    // Side A: Start a NetService as a listener (the "server" that will accept)
-    let listen_addr_a = "127.0.0.1:0".parse().unwrap();
-    let service_cfg_a = NetServiceConfig {
-        listen_addr: listen_addr_a,
-        outbound_peers: vec![],
-        client_cfg: client_cfg.clone(),
-        server_cfg: server_cfg.clone(),
-        max_peers: 100,
-        ping_interval: Duration::from_millis(50),
-        liveness_timeout: Duration::from_millis(200),
-    };
-
-    let mut service_a = NetService::new(service_cfg_a).expect("NetService::new for A failed");
-    let actual_addr_a = service_a.local_addr().expect("local_addr failed for A");
-
-    // Server A thread: accept the incoming connection
-    let server_handle = thread::spawn(move || {
-        // Try accept_one until we get a peer
-        for _ in 0..1000 {
-            match service_a.accept_one() {
-                Ok(Some(peer_id)) => {
-                    assert_eq!(service_a.peers().len(), 1);
-                    return (service_a, peer_id);
-                }
-                Ok(None) => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(e) => panic!("accept_one failed: {:?}", e),
-            }
-        }
-        panic!("Timeout waiting for inbound connection on A");
-    });
-
-    // Side B: Create a NetService with outbound_peers configured
-    let listen_addr_b = "127.0.0.1:0".parse().unwrap();
-    let service_cfg_b = NetServiceConfig {
-        listen_addr: listen_addr_b,
-        outbound_peers: vec![(PeerId(1), actual_addr_a)],
-        client_cfg,
-        server_cfg,
-        max_peers: 100,
-        ping_interval: Duration::from_millis(50),
-        liveness_timeout: Duration::from_millis(200),
-    };
-
-    let mut service_b = NetService::new(service_cfg_b).expect("NetService::new for B failed");
-
-    // B connects to all outbound peers
-    service_b
-        .connect_outbound_from_config()
-        .expect("connect_outbound_from_config failed");
-
-    // Verify B now has one peer
-    assert_eq!(service_b.peers().len(), 1);
-
-    // Wait for A to accept
-    let (mut service_a, peer_id) = server_handle.join().expect("server thread panicked");
-
-    // Verify A also has one peer
-    assert_eq!(peer_id, PeerId(1));
-    assert_eq!(service_a.peers().len(), 1);
-
-    // Verify connectivity by exchanging a ping/pong
-    // B sends ping to its peer (PeerId(1))
-    service_b
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Ping(999))
-        .expect("B send_to failed");
-
-    // A receives the ping
-    let (recv_id, msg) = service_a
-        .peers()
-        .recv_from_any()
-        .expect("A recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Ping(999));
-
-    // A sends pong back
-    service_a
-        .peers()
-        .send_to(PeerId(1), &NetMessage::Pong(999))
-        .expect("A send_to failed");
-
-    // B receives pong
-    let (recv_id, msg) = service_b
-        .peers()
-        .recv_from_any()
-        .expect("B recv_from_any failed");
-    assert_eq!(recv_id, PeerId(1));
-    assert_eq!(msg, NetMessage::Pong(999));
-}
-
-/// Test that NetService::step() accepts inbound connections.
-#[test]
-fn net_service_step_accepts_connection() {
-    let setup = create_test_setup();
-    let server_cfg = setup.server_cfg;
-    let client_cfg = setup.client_cfg;
-
-    // Create NetService for the server side
-    let listen_addr = "127.0.0.1:0".parse().unwrap();
-    let service_cfg = NetServiceConfig {
-        listen_addr,
-        outbound_peers: vec![],
-        client_cfg: client_cfg.clone(),
-        server_cfg,
-        max_peers: 100,
-        ping_interval: Duration::from_millis(50),
-        // Use a very large liveness_timeout so peers won't be pruned during this test.
+        max_peers: 10,
+        ping_interval: Duration::from_millis(10),
+        // Large liveness_timeout to avoid pruning during this test
         liveness_timeout: Duration::from_secs(60),
     };
 
+    // Create NetService (server side)
     let mut service = NetService::new(service_cfg).expect("NetService::new failed");
     let actual_addr = service.local_addr().expect("local_addr failed");
 
-    // Server thread: call step() in a loop
-    let server_handle = thread::spawn(move || {
-        for _ in 0..1000 {
-            service.step().expect("step failed");
-            if service.peers().len() > 0 {
-                return service;
+    // Track ping count on client side
+    let client_handle = thread::spawn(move || {
+        // Connect as a client
+        let mut client_mgr = PeerManager::new();
+        client_mgr
+            .add_outbound_peer(PeerId(1), &actual_addr.to_string(), client_cfg)
+            .expect("client add_outbound_peer failed");
+
+        // Wait for pings and count them
+        let mut ping_count = 0;
+        let start = Instant::now();
+        let timeout = Duration::from_millis(200);
+
+        while start.elapsed() < timeout {
+            // Try to receive a message (non-blocking would be nice, but we use a timeout)
+            match client_mgr.recv_from_any() {
+                Ok((_, NetMessage::Ping(_))) => {
+                    ping_count += 1;
+                    // We've received at least one ping, that's what we need to verify
+                    if ping_count >= 1 {
+                        break;
+                    }
+                }
+                Ok((_, _other)) => {
+                    // Other message types, continue waiting
+                }
+                Err(_) => {
+                    // No data ready or error, sleep briefly
+                    thread::sleep(Duration::from_millis(1));
+                }
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        panic!("Timeout waiting for connection via step()");
+
+        (client_mgr, ping_count)
     });
 
-    // Client side: connect
-    let mut client_mgr = PeerManager::new();
-    client_mgr
-        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
-        .expect("client add_outbound_peer failed");
+    // Server side: accept connection and call step() repeatedly
+    let start = Instant::now();
+    let timeout = Duration::from_millis(200);
+    let mut accepted = false;
 
-    // Wait for server
-    let mut service = server_handle.join().expect("server thread panicked");
-    assert_eq!(service.peers().len(), 1);
+    while start.elapsed() < timeout {
+        service.step().expect("step failed");
+
+        if !accepted && service.peers().len() > 0 {
+            accepted = true;
+        }
+
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // Wait for client thread
+    let (_client_mgr, ping_count) = client_handle.join().expect("client thread panicked");
+
+    // Verify that at least one Ping was received
+    assert!(
+        accepted,
+        "Server should have accepted a connection"
+    );
+    assert!(
+        ping_count >= 1,
+        "Client should have received at least one Ping, got {}",
+        ping_count
+    );
+}
+
+/// Test 5.2: net_service_prunes_dead_peers_after_timeout
+///
+/// Verifies that NetService removes peers that haven't responded to pings
+/// within the liveness_timeout after the grace period.
+#[test]
+fn net_service_prunes_dead_peers_after_timeout() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Create NetServiceConfig with a short liveness_timeout
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 10,
+        ping_interval: Duration::from_millis(10),
+        // Short liveness_timeout for testing pruning
+        liveness_timeout: Duration::from_millis(50),
+    };
+
+    // Create NetService (server side)
+    let mut service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = service.local_addr().expect("local_addr failed");
+
+    // Start client 1 in a thread (we need server to accept)
+    let actual_addr_clone = actual_addr;
+    let client_cfg_clone = client_cfg.clone();
+    let client1_handle = thread::spawn(move || {
+        let mut mgr = PeerManager::new();
+        mgr.add_outbound_peer(PeerId(1), &actual_addr_clone.to_string(), client_cfg_clone)
+            .expect("client1 add_outbound_peer failed");
+        mgr
+    });
+
+    // Accept first client
+    let mut accepted_count = 0;
+    for _ in 0..1000 {
+        match service.accept_one() {
+            Ok(Some(_peer_id)) => {
+                accepted_count += 1;
+                break;
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => panic!("accept_one failed: {:?}", e),
+        }
+    }
+    assert_eq!(accepted_count, 1, "Should have accepted 1 client");
+    let _client_mgr1 = client1_handle.join().expect("client1 thread panicked");
+
+    // Start client 2 in a thread
+    let actual_addr_clone2 = actual_addr;
+    let client2_handle = thread::spawn(move || {
+        let mut mgr = PeerManager::new();
+        mgr.add_outbound_peer(PeerId(2), &actual_addr_clone2.to_string(), client_cfg)
+            .expect("client2 add_outbound_peer failed");
+        mgr
+    });
+
+    // Accept second client
+    for _ in 0..1000 {
+        match service.accept_one() {
+            Ok(Some(_peer_id)) => {
+                accepted_count += 1;
+                break;
+            }
+            Ok(None) => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => panic!("accept_one failed: {:?}", e),
+        }
+    }
+    assert_eq!(accepted_count, 2, "Should have accepted 2 clients");
+    let _client_mgr2 = client2_handle.join().expect("client2 thread panicked");
+
+    // Verify we have 2 peers
+    assert_eq!(service.peers().len(), 2, "Should have 2 peers initially");
+
+    // For peer B (PeerId(2)): leave last_pong as None so it's considered dead
+    // (it's already None by default)
+
+    // Wait for the liveness_timeout grace period to pass
+    // The grace period is based on created_at, so we need to wait
+    thread::sleep(Duration::from_millis(100)); // > liveness_timeout (50ms)
+
+    // For peer A (PeerId(1)): set last_pong to "recent" AFTER the sleep
+    // so it's considered live when step() is called
+    {
+        let peer_a = service
+            .peers()
+            .get_peer_mut(PeerId(1))
+            .expect("peer 1 not found");
+        peer_a.set_last_pong_for_test(Some(Instant::now()));
+    }
+
+    // Call step() to trigger pruning
+    service.step().expect("step failed");
+
+    // Verify peer A is still present (is_live returns true)
+    assert!(
+        service.peers().get_peer(PeerId(1)).is_some(),
+        "Peer A should still be present"
+    );
+
+    // Verify peer B has been removed (is_live returns false)
+    assert!(
+        service.peers().get_peer(PeerId(2)).is_none(),
+        "Peer B should have been pruned"
+    );
+
+    // Final verification: only 1 peer remains
+    assert_eq!(service.peers().len(), 1, "Should have 1 peer after pruning");
 }

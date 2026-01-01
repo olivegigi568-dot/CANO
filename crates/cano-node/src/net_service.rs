@@ -10,7 +10,7 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpListener};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::peer::PeerId;
 use crate::peer_manager::{PeerManager, PeerManagerError};
@@ -75,6 +75,17 @@ pub struct NetServiceConfig {
     /// Maximum number of peers this service will track at once.
     /// If the limit is reached, new inbound connections are rejected.
     pub max_peers: usize,
+
+    /// How often to send Ping to all peers.
+    ///
+    /// This is a best-effort liveness hint, not a consensus-critical timeout.
+    pub ping_interval: Duration,
+
+    /// How long without a Pong before a peer is considered dead
+    /// and becomes eligible for pruning.
+    ///
+    /// This is a best-effort liveness hint, not a consensus-critical timeout.
+    pub liveness_timeout: Duration,
 }
 
 // ============================================================================
@@ -97,6 +108,10 @@ pub struct NetService {
     cfg: NetServiceConfig,
     /// Counter for generating peer IDs for inbound connections.
     next_inbound_id: u64,
+    /// Timestamp of the last ping broadcast.
+    last_ping_at: Option<Instant>,
+    /// Nonce of the last ping broadcast.
+    last_ping_nonce: u64,
 }
 
 impl NetService {
@@ -114,6 +129,8 @@ impl NetService {
             peers: PeerManager::new(),
             cfg,
             next_inbound_id: 1,
+            last_ping_at: None,
+            last_ping_nonce: 0,
         })
     }
 
@@ -198,13 +215,14 @@ impl NetService {
 
     /// Perform a single network service step.
     ///
-    /// Currently this:
-    /// - Accepts at most one inbound connection
+    /// `step()` is intended to be called regularly by the node main loop.
+    /// Each call:
+    /// - Accepts at most one inbound connection (if not at max_peers)
+    /// - Periodically broadcasts Ping messages based on `ping_interval`
+    /// - Prunes peers whose `is_live(liveness_timeout)` returns false
     ///
     /// Note: If the peer limit is reached, this method continues normally
     /// (the limit is an expected operational state, not an error).
-    ///
-    /// Future extensions: poll peers, send pings, etc.
     ///
     /// # Errors
     ///
@@ -219,7 +237,75 @@ impl NetService {
             }
             Err(e) => return Err(e),
         }
-        // Future: we could do more here (poll peers, send pings, etc.)
+
+        // Run ping sweep if due.
+        self.maybe_broadcast_ping()?;
+
+        // Prune dead peers based on liveness_timeout.
+        self.prune_dead_peers()?;
+
+        Ok(())
+    }
+
+    /// Broadcast a Ping to all peers if enough time has elapsed since the last ping.
+    fn maybe_broadcast_ping(&mut self) -> Result<(), NetServiceError> {
+        let now = Instant::now();
+        let do_ping = match self.last_ping_at {
+            None => true,
+            Some(last) => now.duration_since(last) >= self.cfg.ping_interval,
+        };
+
+        if !do_ping {
+            return Ok(());
+        }
+
+        self.last_ping_nonce = self.last_ping_nonce.wrapping_add(1);
+        self.peers.broadcast_ping(self.last_ping_nonce)?;
+        self.last_ping_at = Some(now);
+
+        Ok(())
+    }
+
+    /// Remove peers that are not live according to the configured liveness_timeout.
+    ///
+    /// A peer is considered eligible for pruning if:
+    /// - It has been around for at least `liveness_timeout` since creation, AND
+    /// - `is_live(liveness_timeout)` returns false (no pong within timeout)
+    ///
+    /// This gives new peers a grace period before they can be pruned.
+    fn prune_dead_peers(&mut self) -> Result<(), NetServiceError> {
+        let timeout = self.cfg.liveness_timeout;
+        let now = Instant::now();
+
+        // Collect dead peer IDs first to avoid borrowing issues.
+        let dead_ids: Vec<PeerId> = self
+            .peers
+            .iter_ids()
+            .filter_map(|id| {
+                // Check if the peer has existed long enough to be eligible for pruning.
+                let peer = self.peers.get_peer(id)?;
+                if now.duration_since(peer.created_at()) < timeout {
+                    // Peer is too new to prune, give it time to respond.
+                    return None;
+                }
+
+                // Check if the peer is live.
+                match self.peers.is_peer_live(id, timeout) {
+                    Ok(true) => None,
+                    Ok(false) => Some(id),
+                    // Any error (e.g., PeerNotFound) is treated as reason to prune,
+                    // though this should be rare since we just verified the peer exists.
+                    Err(_) => Some(id),
+                }
+            })
+            .collect();
+
+        for id in dead_ids {
+            // Ignore PeerNotFound errors since the peer may have been removed
+            // by another operation between collection and removal.
+            let _ = self.peers.remove_peer(id);
+        }
+
         Ok(())
     }
 
