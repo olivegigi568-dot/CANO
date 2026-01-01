@@ -8,3 +8,7 @@ cano-types  = { path = "../cano-types" }
 cano-wire   = { path = "../cano-wire" }
 cano-hash   = { path = "../cano-hash" }
 cano-crypto = { path = "../cano-crypto" }
+rand = "0.8"
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std_rng"] }
