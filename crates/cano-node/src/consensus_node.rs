@@ -13,13 +13,21 @@
 //!
 //! We are not yet embedding the real consensus engine here; this is a
 //! networking + trait glue skeleton.
+//!
+//! # Identity Mapping
+//!
+//! `ConsensusNode` also holds a `PeerValidatorMap` that tracks the relationship
+//! between transport-level `PeerId`s and consensus-level `ValidatorId`s.
+//! This mapping is not yet enforced at runtime, but provides a place for future
+//! tasks to add cryptographic verification.
 
 use crate::consensus_net::ConsensusNetAdapter;
+use crate::identity_map::PeerValidatorMap;
 use crate::net_service::{NetService, NetServiceError};
 use crate::peer::PeerId;
 use crate::peer_manager::PeerManager;
 
-use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
+use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError, ValidatorId};
 
 // ============================================================================
 // ConsensusNodeError
@@ -55,20 +63,60 @@ impl From<NetworkError> for ConsensusNodeError {
 ///
 /// This struct does NOT handle the full consensus engine logic yet.
 /// It only provides a networking + trait glue skeleton.
+///
+/// The `id_map` field holds a `PeerValidatorMap` that tracks the relationship
+/// between transport-level `PeerId`s and consensus-level `ValidatorId`s.
+/// This mapping is not yet enforced at runtime; it exists so we can make the
+/// binding explicit and testable.
 #[derive(Debug)]
 pub struct ConsensusNode {
     net_service: NetService,
+    id_map: PeerValidatorMap,
 }
 
 impl ConsensusNode {
     /// Create a new `ConsensusNode` with the given `NetService`.
     pub fn new(net_service: NetService) -> Self {
-        ConsensusNode { net_service }
+        ConsensusNode {
+            net_service,
+            id_map: PeerValidatorMap::new(),
+        }
+    }
+
+    /// Create a new `ConsensusNode` with the given `NetService` and `PeerValidatorMap`.
+    ///
+    /// This constructor allows tests to pre-populate the identity mapping.
+    pub fn with_id_map(net_service: NetService, id_map: PeerValidatorMap) -> Self {
+        ConsensusNode { net_service, id_map }
     }
 
     /// Access the underlying `NetService` for low-level control or tests.
     pub fn net_service(&mut self) -> &mut NetService {
         &mut self.net_service
+    }
+
+    /// Access the identity map for reading or modification.
+    pub fn id_map(&self) -> &PeerValidatorMap {
+        &self.id_map
+    }
+
+    /// Mutably access the identity map.
+    pub fn id_map_mut(&mut self) -> &mut PeerValidatorMap {
+        &mut self.id_map
+    }
+
+    /// Register a mapping from a `PeerId` to a `ValidatorId`.
+    ///
+    /// This is a convenience method for `id_map_mut().insert(...)`.
+    pub fn register_peer_validator(&mut self, peer: PeerId, validator: ValidatorId) {
+        self.id_map.insert(peer, validator);
+    }
+
+    /// Look up the `ValidatorId` for a given `PeerId`.
+    ///
+    /// This is a convenience method for `id_map().get(...)`.
+    pub fn get_validator_for_peer(&self, peer: &PeerId) -> Option<ValidatorId> {
+        self.id_map.get(peer)
     }
 
     /// Run one network step (accept, ping-sweep, prune).
