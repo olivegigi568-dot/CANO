@@ -23,12 +23,17 @@
 //! - `ConsensusEngineDriver`: trait for driving a consensus engine
 //! - `ConsensusEngineAction`: actions the engine wants performed on the network
 //! - `HotStuffDriver`: thin wrapper for running HotStuff via the driver interface
+//!
+//! Single-node simulation harness:
+//! - `SingleNodeSim`: minimal harness for testing consensus with MockConsensusNetwork
 
 pub mod driver;
 pub mod network;
+pub mod sim;
 
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver};
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
+pub use sim::SingleNodeSim;
 
 use cano_crypto::CryptoProvider;
 use cano_hash::vote_digest;
