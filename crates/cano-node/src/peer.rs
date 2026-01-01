@@ -7,6 +7,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crate::secure_channel::{ChannelError, SecureChannel};
+use cano_consensus::{ToValidatorId, ValidatorId};
 use cano_wire::error::WireError;
 use cano_wire::net::NetMessage;
 
@@ -27,6 +28,12 @@ use cano_wire::net::NetMessage;
 /// consensus-level validator identities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PeerId(pub u64);
+
+impl ToValidatorId for PeerId {
+    fn to_validator_id(&self) -> ValidatorId {
+        ValidatorId::new(self.0)
+    }
+}
 
 /// A peer connection over an encrypted secure channel.
 ///
