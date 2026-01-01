@@ -293,13 +293,17 @@ impl NetService {
                 match self.peers.is_peer_live(id, timeout) {
                     Ok(true) => None,
                     Ok(false) => Some(id),
+                    // Any error (e.g., PeerNotFound) is treated as reason to prune,
+                    // though this should be rare since we just verified the peer exists.
                     Err(_) => Some(id),
                 }
             })
             .collect();
 
         for id in dead_ids {
-            self.peers.remove_peer(id)?;
+            // Ignore PeerNotFound errors since the peer may have been removed
+            // by another operation between collection and removal.
+            let _ = self.peers.remove_peer(id);
         }
 
         Ok(())
