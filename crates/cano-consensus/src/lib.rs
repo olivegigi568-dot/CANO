@@ -18,9 +18,16 @@
 //! - `ConsensusNetworkEvent`: events received from the network
 //! - `NetworkError`: error type for network operations
 //! - `MockConsensusNetwork`: in-memory mock for testing
+//!
+//! Consensus engine driver interface:
+//! - `ConsensusEngineDriver`: trait for driving a consensus engine
+//! - `ConsensusEngineAction`: actions the engine wants performed on the network
+//! - `HotStuffDriver`: thin wrapper for running HotStuff via the driver interface
 
+pub mod driver;
 pub mod network;
 
+pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver};
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
 
 use cano_crypto::CryptoProvider;
