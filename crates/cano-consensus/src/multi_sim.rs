@@ -71,17 +71,17 @@ where
         MultiNodeSim { nets, drivers }
     }
 
-    /// One multi-node step:
-    /// - For each node:
-    ///   - Non-blocking poll its local network for one event
-    ///   - Call driver.step(...)
-    /// - Route generated actions to target nodes' networks.
-    pub fn step_once(&mut self) -> Result<(), NetworkError> {
-        // 1. Collect events and actions for each node.
-        // We'll store actions by source node Id so we can route them in phase 2.
-        let mut all_actions: Vec<(Id, Vec<ConsensusEngineAction<Id>>)> = Vec::new();
-
-        // We need node ids in a Vec to avoid borrow checker issues.
+    /// Phase 1 of the multi-node step: poll each node's network and collect actions.
+    ///
+    /// This method runs all drivers and returns the actions they produce, but does NOT
+    /// route them to other nodes. This allows external wrappers (like `AdversarialMultiNodeSim`)
+    /// to intercept and modify the routing behavior.
+    ///
+    /// Returns a vector of (node_id, actions) pairs.
+    pub fn step_collect_actions(
+        &mut self,
+    ) -> Result<Vec<(Id, Vec<ConsensusEngineAction<Id>>)>, NetworkError> {
+        let mut all_actions = Vec::new();
         let node_ids: Vec<Id> = self.nets.keys().copied().collect();
 
         for node_id in node_ids {
@@ -94,15 +94,24 @@ where
                 .get_mut(&node_id)
                 .expect("driver missing for node");
 
-            // Non-blocking poll local network.
             let maybe_event = net.try_recv_one()?;
-
-            // Let the driver process it.
             let actions = driver.step(net, maybe_event)?;
             all_actions.push((node_id, actions));
         }
 
-        // 2. Deliver actions to networks.
+        Ok(all_actions)
+    }
+
+    /// One multi-node step:
+    /// - For each node:
+    ///   - Non-blocking poll its local network for one event
+    ///   - Call driver.step(...)
+    /// - Route generated actions to target nodes' networks.
+    pub fn step_once(&mut self) -> Result<(), NetworkError> {
+        // Phase 1: Collect events and actions for each node.
+        let all_actions = self.step_collect_actions()?;
+
+        // Phase 2: Deliver actions to networks.
         for (from_id, actions) in all_actions {
             for action in actions {
                 match action {
