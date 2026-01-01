@@ -170,28 +170,27 @@ where
 
         if let Some(event) = maybe_event {
             match event {
-                ConsensusNetworkEvent::IncomingVote { from: _, vote: _ } => {
+                ConsensusNetworkEvent::IncomingVote { from, vote } => {
                     // Track that we received a vote.
                     // TODO: Delegate to underlying engine for actual vote processing:
-                    // - Verify vote signature
+                    // - Verify vote signature (from: sender ID, vote: vote data)
                     // - Collect votes for QC formation
                     // - Emit actions if QC threshold is reached
+                    let _ = (from, vote); // Silence unused warnings until TODO is implemented
                     self.votes_received += 1;
 
                     // For now, return Noop to indicate the event was processed
                     // but no network action is required.
                     actions.push(ConsensusEngineAction::Noop);
                 }
-                ConsensusNetworkEvent::IncomingProposal {
-                    from: _,
-                    proposal: _,
-                } => {
+                ConsensusNetworkEvent::IncomingProposal { from, proposal } => {
                     // Track that we received a proposal.
                     // TODO: Delegate to underlying engine for actual proposal processing:
-                    // - Verify proposal structure and QC
+                    // - Verify proposal structure and QC (from: sender ID, proposal: block data)
                     // - Check HotStuff locking rules
                     // - Decide whether to vote
                     // - Emit BroadcastVote or SendVoteTo action if voting
+                    let _ = (from, proposal); // Silence unused warnings until TODO is implemented
                     self.proposals_received += 1;
 
                     // For now, return Noop to indicate the event was processed
