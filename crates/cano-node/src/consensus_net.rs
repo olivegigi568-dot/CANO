@@ -173,6 +173,41 @@ impl<'a> ConsensusNetAdapter<'a> {
 
         Ok(event)
     }
+
+    /// Non-blocking receive of one consensus-related message from any peer.
+    ///
+    /// Returns:
+    /// - `Ok(Some(event))` if a message is available
+    /// - `Ok(None)` if no message is currently available
+    /// - `Err(ConsensusNetError)` on real errors
+    pub fn try_recv_one_inner(&mut self) -> Result<Option<ConsensusNetEvent>, ConsensusNetError> {
+        match self.peers.try_recv_from_any()? {
+            Some((from, msg)) => {
+                let event = match msg {
+                    NetMessage::ConsensusVote(vote) => {
+                        ConsensusNetEvent::IncomingVote { from, vote }
+                    }
+                    NetMessage::BlockProposal(proposal) => {
+                        ConsensusNetEvent::IncomingProposal { from, proposal }
+                    }
+                    NetMessage::Ping(_) => {
+                        return Err(ConsensusNetError::Io(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "unexpected Ping message in consensus adapter",
+                        )));
+                    }
+                    NetMessage::Pong(_) => {
+                        return Err(ConsensusNetError::Io(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "unexpected Pong message in consensus adapter",
+                        )));
+                    }
+                };
+                Ok(Some(event))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 // ============================================================================
@@ -228,5 +263,27 @@ impl<'a> ConsensusNetwork for ConsensusNetAdapter<'a> {
         };
 
         Ok(mapped)
+    }
+
+    fn try_recv_one(
+        &mut self,
+    ) -> Result<Option<ConsensusNetworkEvent<Self::Id>>, NetworkError> {
+        // Delegate to the inherent method and map the result
+        match self.try_recv_one_inner() {
+            Ok(Some(evt)) => {
+                // Convert node-level ConsensusNetEvent to trait-level ConsensusNetworkEvent
+                let mapped = match evt {
+                    ConsensusNetEvent::IncomingVote { from, vote } => {
+                        ConsensusNetworkEvent::IncomingVote { from, vote }
+                    }
+                    ConsensusNetEvent::IncomingProposal { from, proposal } => {
+                        ConsensusNetworkEvent::IncomingProposal { from, proposal }
+                    }
+                };
+                Ok(Some(mapped))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(NetworkError::Other(format!("{:?}", e))),
+        }
     }
 }

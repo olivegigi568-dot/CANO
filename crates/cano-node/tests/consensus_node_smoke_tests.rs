@@ -566,3 +566,163 @@ fn consensus_node_receives_block_proposal_event_via_trait() {
         other => panic!("expected IncomingProposal, got {:?}", other),
     }
 }
+
+// ============================================================================
+// step_and_try_recv_event Tests
+// ============================================================================
+
+/// Test that step_and_try_recv_event returns None when no messages are available.
+///
+/// This test:
+/// 1. Creates a server ConsensusNode with NetService.
+/// 2. Does not connect any peers.
+/// 3. Calls step_and_try_recv_event() and asserts it returns Ok(None).
+#[test]
+fn consensus_node_step_and_try_recv_event_returns_none_when_no_message() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Create NetServiceConfig for the server side
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg,
+        server_cfg,
+        max_peers: 100,
+        ping_interval: Duration::from_secs(60), // Long interval to avoid ping during test
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and wrap in ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let mut node = ConsensusNode::new(net_service);
+
+    // Call step_and_try_recv_event - should return Ok(None) since no peers/messages
+    let result = node.step_and_try_recv_event();
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert!(
+        result.unwrap().is_none(),
+        "expected None when no message available"
+    );
+}
+
+/// Test that step_and_try_recv_event returns Some when a vote arrives.
+///
+/// This test:
+/// 1. Sets up server ConsensusNode and client consensus network.
+/// 2. Before sending anything, calls step_and_try_recv_event() and asserts Ok(None).
+/// 3. Sends a vote from the client.
+/// 4. Calls step_and_try_recv_event() in a loop until Some(event) is received.
+/// 5. Asserts the event is the expected IncomingVote.
+#[test]
+fn consensus_node_step_and_try_recv_event_returns_some_when_vote_arrives() {
+    use std::sync::mpsc;
+
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Create the dummy vote to send
+    let dummy_vote = make_dummy_vote();
+    let expected_vote = dummy_vote.clone();
+
+    // Create NetServiceConfig for the server side
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and wrap in ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = net_service.local_addr().expect("local_addr failed");
+    let mut node = ConsensusNode::new(net_service);
+
+    // Use a channel to signal when the server is ready to receive
+    let (server_ready_tx, server_ready_rx) = mpsc::channel::<()>();
+    // Use a channel to signal when the client has sent the vote
+    let (vote_sent_tx, vote_sent_rx) = mpsc::channel::<()>();
+
+    // Server thread: use step_and_try_recv_event to receive vote
+    let server_handle = thread::spawn(move || {
+        // First, step network until we have a connection
+        for _ in 0..1000 {
+            node.step_network().expect("step_network failed");
+            if node.net_service().peers().len() > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert!(
+            node.net_service().peers().len() > 0,
+            "No peer connected to server"
+        );
+
+        // Signal that server is ready to receive
+        server_ready_tx.send(()).expect("failed to send server ready signal");
+
+        // Wait for the vote to be sent before trying to receive
+        vote_sent_rx.recv().expect("failed to receive vote sent signal");
+
+        // Now use step_and_try_recv_event to receive the vote
+        // Since the vote has been sent, data should be available
+        let mut received_event = None;
+        for _ in 0..1000 {
+            match node.step_and_try_recv_event() {
+                Ok(Some(evt)) => {
+                    received_event = Some(evt);
+                    break;
+                }
+                Ok(None) => {
+                    // No message yet, try again with a small sleep
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => {
+                    panic!("step_and_try_recv_event failed: {:?}", e);
+                }
+            }
+        }
+
+        received_event.expect("Failed to receive vote event")
+    });
+
+    // Client side: Connect via PeerManager and send vote via ConsensusNetAdapter
+    let mut client_peers = PeerManager::new();
+    client_peers
+        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
+        .expect("client add_outbound_peer failed");
+
+    // Wait for server to be ready
+    server_ready_rx.recv().expect("failed to receive server ready signal");
+
+    // Create a ConsensusNetAdapter (borrowing) and use it via the trait
+    {
+        let mut adapter = ConsensusNetAdapter::new(&mut client_peers);
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+        net.broadcast_vote(&dummy_vote)
+            .expect("client broadcast_vote failed");
+    }
+
+    // Signal that the vote has been sent
+    vote_sent_tx.send(()).expect("failed to send vote sent signal");
+
+    // Wait for server to receive
+    let event = server_handle.join().expect("server thread panicked");
+
+    // Assert we received the expected event
+    match event {
+        ConsensusNetworkEvent::IncomingVote { from, vote } => {
+            assert_eq!(from, PeerId(1)); // Server assigns PeerId(1) to first inbound peer
+            assert_eq!(vote, expected_vote);
+        }
+        other => panic!("expected IncomingVote, got {:?}", other),
+    }
+}
