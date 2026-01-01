@@ -32,6 +32,8 @@ pub struct Peer {
     last_ping: Option<Instant>,
     /// Timestamp of the last Pong received by this peer.
     last_pong: Option<Instant>,
+    /// Timestamp when this peer was created.
+    created_at: Instant,
 }
 
 impl Peer {
@@ -42,6 +44,7 @@ impl Peer {
             channel,
             last_ping: None,
             last_pong: None,
+            created_at: Instant::now(),
         }
     }
 
@@ -123,6 +126,11 @@ impl Peer {
     /// Get the timestamp of the last Pong received (for testing/debugging).
     pub fn last_pong(&self) -> Option<Instant> {
         self.last_pong
+    }
+
+    /// Get the timestamp when this peer was created.
+    pub fn created_at(&self) -> Instant {
+        self.created_at
     }
 
     /// Set the last_pong timestamp directly (for testing purposes only).

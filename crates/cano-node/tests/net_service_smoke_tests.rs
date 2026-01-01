@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use cano_crypto::{AeadSuite, CryptoError, KemSuite, SignatureSuite, StaticCryptoProvider};
 use cano_net::{
@@ -309,6 +310,8 @@ fn net_service_accepts_inbound_peer() {
         client_cfg: client_cfg.clone(),
         server_cfg,
         max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_millis(200),
     };
 
     // Create NetService
@@ -392,6 +395,8 @@ fn net_service_connects_outbound_peers_from_config() {
         client_cfg: client_cfg.clone(),
         server_cfg: server_cfg.clone(),
         max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_millis(200),
     };
 
     let mut service_a = NetService::new(service_cfg_a).expect("NetService::new for A failed");
@@ -423,6 +428,8 @@ fn net_service_connects_outbound_peers_from_config() {
         client_cfg,
         server_cfg,
         max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_millis(200),
     };
 
     let mut service_b = NetService::new(service_cfg_b).expect("NetService::new for B failed");
@@ -487,6 +494,9 @@ fn net_service_step_accepts_connection() {
         client_cfg: client_cfg.clone(),
         server_cfg,
         max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        // Use a very large liveness_timeout so peers won't be pruned during this test.
+        liveness_timeout: Duration::from_secs(60),
     };
 
     let mut service = NetService::new(service_cfg).expect("NetService::new failed");

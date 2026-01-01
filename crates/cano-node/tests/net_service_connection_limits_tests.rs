@@ -314,6 +314,8 @@ fn net_service_respects_max_peers_limit() {
         client_cfg: client_cfg.clone(),
         server_cfg,
         max_peers: 1, // Limit to exactly 1 peer
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_millis(200),
     };
 
     // Create NetService
@@ -390,6 +392,8 @@ fn net_service_is_peer_live_delegates_to_peer_manager() {
         client_cfg: client_cfg.clone(),
         server_cfg,
         max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_millis(200),
     };
 
     // Create NetService
