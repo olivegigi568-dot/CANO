@@ -37,6 +37,7 @@ pub mod ids;
 pub mod multi_sim;
 pub mod network;
 pub mod sim;
+pub mod validator_set;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver};
@@ -44,6 +45,8 @@ pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
 pub use sim::SingleNodeSim;
+pub use validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
+
 
 use cano_crypto::CryptoProvider;
 use cano_hash::vote_digest;

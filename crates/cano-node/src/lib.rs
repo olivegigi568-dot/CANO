@@ -23,6 +23,7 @@ pub mod net_service;
 pub mod peer;
 pub mod peer_manager;
 pub mod secure_channel;
+pub mod validator_config;
 
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
 pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError};
@@ -31,6 +32,10 @@ pub use identity_map::PeerValidatorMap;
 pub use net_service::{NetService, NetServiceConfig, NetServiceError};
 pub use peer::{Peer, PeerId};
 pub use peer_manager::{PeerManager, PeerManagerError};
+pub use validator_config::{
+    build_net_config_and_id_map_for_tests, LocalValidatorConfig, NodeValidatorConfig,
+    RemoteValidatorConfig,
+};
 
 use std::sync::Arc;
 
