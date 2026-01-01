@@ -95,6 +95,16 @@ pub trait ConsensusNetwork {
 
     /// Blocking receive of one consensus-related event from the network.
     fn recv_one(&mut self) -> Result<ConsensusNetworkEvent<Self::Id>, NetworkError>;
+
+    /// Non-blocking receive of one consensus-related event from the network.
+    ///
+    /// Returns:
+    /// - `Ok(Some(event))` if an event is available
+    /// - `Ok(None)` if no event is currently available
+    /// - `Err(NetworkError)` on real errors
+    fn try_recv_one(
+        &mut self,
+    ) -> Result<Option<ConsensusNetworkEvent<Self::Id>>, NetworkError>;
 }
 
 // ============================================================================
@@ -157,6 +167,12 @@ impl<Id: Clone> ConsensusNetwork for MockConsensusNetwork<Id> {
                 "no events in mock queue",
             ))
         })
+    }
+
+    fn try_recv_one(
+        &mut self,
+    ) -> Result<Option<ConsensusNetworkEvent<Self::Id>>, NetworkError> {
+        Ok(self.inbound.pop_front())
     }
 }
 
@@ -315,5 +331,81 @@ mod tests {
         } else {
             panic!("expected Io error with WouldBlock");
         }
+    }
+
+    #[test]
+    fn mock_network_try_recv_one_returns_none_when_empty() {
+        let mut mock: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
+
+        // When the inbound queue is empty, try_recv_one should return Ok(None)
+        let result = mock.try_recv_one();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn mock_network_try_recv_one_returns_some_in_fifo_order() {
+        let mut mock: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
+
+        let vote1 = make_dummy_vote(1, 0);
+        let vote2 = make_dummy_vote(2, 1);
+        let proposal = make_dummy_proposal(3, 2);
+
+        // Enqueue events in order
+        mock.enqueue_event(ConsensusNetworkEvent::IncomingVote {
+            from: 100,
+            vote: vote1.clone(),
+        });
+        mock.enqueue_event(ConsensusNetworkEvent::IncomingProposal {
+            from: 200,
+            proposal: proposal.clone(),
+        });
+        mock.enqueue_event(ConsensusNetworkEvent::IncomingVote {
+            from: 300,
+            vote: vote2.clone(),
+        });
+
+        // Use try_recv_one to receive events in FIFO order
+        let event1 = mock.try_recv_one().unwrap();
+        assert!(event1.is_some());
+        let event1 = event1.unwrap();
+        assert!(matches!(
+            event1,
+            ConsensusNetworkEvent::IncomingVote { from: 100, .. }
+        ));
+        if let ConsensusNetworkEvent::IncomingVote { vote, .. } = event1 {
+            assert_eq!(vote, vote1);
+        }
+
+        let event2 = mock.try_recv_one().unwrap();
+        assert!(event2.is_some());
+        let event2 = event2.unwrap();
+        assert!(matches!(
+            event2,
+            ConsensusNetworkEvent::IncomingProposal { from: 200, .. }
+        ));
+        if let ConsensusNetworkEvent::IncomingProposal {
+            proposal: p,
+            ..
+        } = event2
+        {
+            assert_eq!(p, proposal);
+        }
+
+        let event3 = mock.try_recv_one().unwrap();
+        assert!(event3.is_some());
+        let event3 = event3.unwrap();
+        assert!(matches!(
+            event3,
+            ConsensusNetworkEvent::IncomingVote { from: 300, .. }
+        ));
+        if let ConsensusNetworkEvent::IncomingVote { vote, .. } = event3 {
+            assert_eq!(vote, vote2);
+        }
+
+        // Queue is now empty, should return Ok(None)
+        let result = mock.try_recv_one();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 }
