@@ -19,7 +19,7 @@ use crate::net_service::{NetService, NetServiceError};
 use crate::peer::PeerId;
 use crate::peer_manager::PeerManager;
 
-use cano_consensus::{ConsensusNetwork, NetworkError};
+use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
 
 // ============================================================================
 // ConsensusNodeError
@@ -90,5 +90,30 @@ impl ConsensusNode {
         let peers: &mut PeerManager = self.net_service.peers();
         let mut adapter = ConsensusNetAdapter::new(peers);
         f(&mut adapter)
+    }
+
+    /// Run one network step and non-blockingly poll for a single consensus event.
+    ///
+    /// This is the first shape of a real node loop primitive:
+    /// ```ignore
+    /// loop {
+    ///     if let Some(evt) = node.step_and_try_recv_event()? {
+    ///         // pass evt to consensus engine (future task)
+    ///     }
+    ///     // do other work, timers, etc.
+    /// }
+    /// ```
+    ///
+    /// Returns:
+    /// - `Ok(Some(event))` if a consensus event is available
+    /// - `Ok(None)` if no event is currently available
+    /// - `Err(ConsensusNodeError)` on errors
+    pub fn step_and_try_recv_event(
+        &mut self,
+    ) -> Result<Option<ConsensusNetworkEvent<PeerId>>, ConsensusNodeError> {
+        self.step_network()?;
+
+        self.with_consensus_network(|net| net.try_recv_one())
+            .map_err(ConsensusNodeError::from)
     }
 }

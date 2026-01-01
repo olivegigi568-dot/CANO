@@ -178,6 +178,35 @@ impl PeerManager {
         )))
     }
 
+    /// Non-blocking receive from any peer.
+    ///
+    /// Iterates over all peers and returns the first message found.
+    ///
+    /// Returns:
+    /// - `Ok(Some((PeerId, NetMessage)))` if a message is available from any peer
+    /// - `Ok(None)` if no peer has data ready
+    /// - `Err(PeerManagerError)` on real errors (not WouldBlock/TimedOut)
+    pub fn try_recv_from_any(&mut self) -> Result<Option<(PeerId, NetMessage)>, PeerManagerError> {
+        for (&id, peer) in self.peers.iter_mut() {
+            match peer.recv_msg() {
+                Ok(msg) => return Ok(Some((id, msg))),
+                Err(ChannelError::Io(ref e))
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    // No data yet, try next peer.
+                    continue;
+                }
+                Err(e) => {
+                    // Any other error is fatal for now.
+                    return Err(PeerManagerError::Channel(e));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     // ========================================================================
     // Ping/Pong liveness methods
     // ========================================================================

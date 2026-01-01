@@ -617,3 +617,209 @@ fn adapter_implements_consensus_network_trait_for_send_vote_to() {
     let vote2 = rx2.recv().expect("recv from channel2 failed");
     assert!(vote2.is_none());
 }
+
+// ============================================================================
+// try_recv_one Tests
+// ============================================================================
+
+/// Test that try_recv_one returns None when no messages are available.
+#[test]
+fn adapter_try_recv_one_returns_none_when_empty() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Bind a TcpListener on an OS-assigned port
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
+    let addr = listener.local_addr().expect("local_addr failed");
+    let addr_str = addr.to_string();
+
+    // Server thread: receive connection and check try_recv_one when no messages
+    let server_handle = thread::spawn(move || {
+        // Accept a single connection
+        let (stream, _peer_addr) = listener.accept().expect("accept failed");
+
+        // Create a PeerManager and add the inbound peer
+        let mut peers = PeerManager::new();
+        peers
+            .add_inbound_peer(PeerId(1), stream, server_cfg)
+            .expect("add_inbound_peer failed");
+
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
+
+        // Use the adapter through the trait interface
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+
+        // Call try_recv_one immediately - should return Ok(None) since no message sent yet
+        let result = net.try_recv_one();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "expected None when no message available");
+    });
+
+    // Client side: connect but don't send anything
+    let mut peers = PeerManager::new();
+    peers
+        .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
+        .expect("add_outbound_peer failed");
+
+    // Wait for server thread to finish
+    server_handle.join().expect("server thread panicked");
+}
+
+/// Test that try_recv_one returns Some when a message is available.
+#[test]
+fn adapter_try_recv_one_returns_some_when_message_available() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Bind a TcpListener on an OS-assigned port
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
+    let addr = listener.local_addr().expect("local_addr failed");
+    let addr_str = addr.to_string();
+
+    // Create the dummy vote to send
+    let dummy_vote = make_dummy_vote();
+    let expected_vote = dummy_vote.clone();
+
+    // Server thread: use the adapter via the ConsensusNetwork trait
+    let server_handle = thread::spawn(move || {
+        // Accept a single connection
+        let (stream, _peer_addr) = listener.accept().expect("accept failed");
+
+        // Create a PeerManager and add the inbound peer
+        let mut peers = PeerManager::new();
+        peers
+            .add_inbound_peer(PeerId(1), stream, server_cfg)
+            .expect("add_inbound_peer failed");
+
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
+
+        // Use the adapter through the trait interface
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+
+        // Poll for a message using try_recv_one
+        let mut received_event = None;
+        for _ in 0..1000 {
+            match net.try_recv_one() {
+                Ok(Some(evt)) => {
+                    received_event = Some(evt);
+                    break;
+                }
+                Ok(None) => {
+                    // No message yet, try again
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(e) => panic!("try_recv_one failed: {:?}", e),
+            }
+        }
+
+        // Return the received vote
+        match received_event.expect("Failed to receive event") {
+            ConsensusNetworkEvent::IncomingVote { from, vote } => {
+                assert_eq!(from, PeerId(1));
+                vote
+            }
+            other => panic!("expected IncomingVote, got {:?}", other),
+        }
+    });
+
+    // Client side: use the adapter via the ConsensusNetwork trait
+    let mut peers = PeerManager::new();
+    peers
+        .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
+        .expect("add_outbound_peer failed");
+
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
+
+    // Use the adapter through the trait interface
+    let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+
+    // Broadcast the vote using trait method
+    net.broadcast_vote(&dummy_vote)
+        .expect("client broadcast_vote failed");
+
+    // Join server thread and verify vote
+    let received_vote = server_handle.join().expect("server thread panicked");
+    assert_eq!(received_vote, expected_vote);
+}
+
+/// Test that try_recv_one drains messages and returns None after all are received.
+#[test]
+fn adapter_try_recv_one_returns_none_after_draining_all_messages() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
+
+    // Bind a TcpListener on an OS-assigned port
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
+    let addr = listener.local_addr().expect("local_addr failed");
+    let addr_str = addr.to_string();
+
+    // Create the dummy vote to send
+    let dummy_vote = make_dummy_vote();
+
+    // Server thread: use the adapter via the ConsensusNetwork trait
+    let server_handle = thread::spawn(move || {
+        // Accept a single connection
+        let (stream, _peer_addr) = listener.accept().expect("accept failed");
+
+        // Create a PeerManager and add the inbound peer
+        let mut peers = PeerManager::new();
+        peers
+            .add_inbound_peer(PeerId(1), stream, server_cfg)
+            .expect("add_inbound_peer failed");
+
+        // Wrap in ConsensusNetAdapter (borrowing)
+        let mut adapter = ConsensusNetAdapter::new(&mut peers);
+
+        // Use the adapter through the trait interface
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+
+        // Wait for a message to be available
+        let mut received_count = 0;
+        for _ in 0..1000 {
+            match net.try_recv_one() {
+                Ok(Some(_)) => {
+                    received_count += 1;
+                    break;
+                }
+                Ok(None) => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(e) => panic!("try_recv_one failed: {:?}", e),
+            }
+        }
+
+        assert_eq!(received_count, 1, "expected to receive exactly 1 message");
+
+        // After draining all messages, try_recv_one should return Ok(None)
+        let result = net.try_recv_one();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "expected None after draining all messages");
+    });
+
+    // Client side: connect and send a single vote
+    let mut peers = PeerManager::new();
+    peers
+        .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
+        .expect("add_outbound_peer failed");
+
+    // Wrap in ConsensusNetAdapter (borrowing)
+    let mut adapter = ConsensusNetAdapter::new(&mut peers);
+
+    // Use the adapter through the trait interface
+    let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+
+    // Send a single vote
+    net.broadcast_vote(&dummy_vote)
+        .expect("client broadcast_vote failed");
+
+    // Wait for server thread to finish
+    server_handle.join().expect("server thread panicked");
+}
