@@ -24,6 +24,21 @@ fn make_dummy_vote(height: u64, round: u64) -> Vote {
     }
 }
 
+/// Create a dummy Vote for testing with a specific validator_index.
+fn make_dummy_vote_with_index(height: u64, round: u64, validator_index: u16) -> Vote {
+    Vote {
+        version: 1,
+        chain_id: 1,
+        height,
+        round,
+        step: 0,
+        block_id: [0u8; 32],
+        validator_index,
+        reserved: 0,
+        signature: vec![],
+    }
+}
+
 /// Create a dummy BlockProposal for testing.
 fn make_dummy_proposal(height: u64, round: u64) -> BlockProposal {
     BlockProposal {
@@ -224,7 +239,8 @@ fn single_node_sim_rejects_vote_from_unknown_validator() {
     let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
     // Enqueue an IncomingVote from an unknown validator (ValidatorId(2))
-    let vote = make_dummy_vote(1, 0);
+    // The vote's validator_index matches the sender's ID for consistency
+    let vote = make_dummy_vote_with_index(1, 0, 2);
     net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
         from: ValidatorId::new(2), // Not in validator set
         vote,
@@ -274,7 +290,8 @@ fn single_node_sim_accepts_vote_from_known_validator() {
     let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
     // Enqueue an IncomingVote from a known validator (ValidatorId(1))
-    let vote = make_dummy_vote(1, 0);
+    // The vote's validator_index matches the sender's ID for consistency
+    let vote = make_dummy_vote_with_index(1, 0, 1);
     net.inbound.push_back(ConsensusNetworkEvent::IncomingVote {
         from: ValidatorId::new(1), // In validator set
         vote,
