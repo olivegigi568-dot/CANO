@@ -1,6 +1,6 @@
 //! Consensus networking adapter for the cano node.
 //!
-//! This module provides `ConsensusNetAdapter`, which wraps a `PeerManager` and
+//! This module provides `ConsensusNetAdapter`, which borrows a `PeerManager` and
 //! presents a clean API in terms of `Vote` and `BlockProposal` instead of raw
 //! `NetMessage`. This adapter is used by the consensus engine (`cano-consensus`)
 //! in tests and in the node.
@@ -8,6 +8,13 @@
 //! The adapter also implements `cano_consensus::ConsensusNetwork`, allowing
 //! the consensus engine to depend only on an abstract trait rather than
 //! concrete networking types.
+//!
+//! # Critical Design Note
+//!
+//! `ConsensusNetAdapter` borrows `&'a mut PeerManager` rather than owning it.
+//! This ensures that `PeerManager` remains a single, owned instance inside
+//! `NetService`. The adapter is intended to be used as an ephemeral view—
+//! created inside methods and not stored in long-lived structs.
 
 use std::io;
 
@@ -70,25 +77,31 @@ pub enum ConsensusNetEvent {
 // ConsensusNetAdapter
 // ============================================================================
 
-/// A consensus networking adapter that wraps a `PeerManager`.
+/// A consensus networking adapter that borrows a `PeerManager`.
 ///
 /// This adapter hides the underlying `NetMessage` representation and provides
 /// a clean API in terms of `Vote` and `BlockProposal` for use by the consensus
 /// engine.
+///
+/// # Lifetime
+///
+/// The adapter borrows `&'a mut PeerManager` and is generic over a lifetime `'a`.
+/// This ensures that `PeerManager` remains a single, owned instance inside
+/// `NetService`, and the adapter is used as an ephemeral view.
 #[derive(Debug)]
-pub struct ConsensusNetAdapter {
-    peers: PeerManager,
+pub struct ConsensusNetAdapter<'a> {
+    peers: &'a mut PeerManager,
 }
 
-impl ConsensusNetAdapter {
-    /// Create a new `ConsensusNetAdapter` wrapping the given `PeerManager`.
-    pub fn new(peers: PeerManager) -> Self {
+impl<'a> ConsensusNetAdapter<'a> {
+    /// Create a new `ConsensusNetAdapter` borrowing the given `PeerManager`.
+    pub fn new(peers: &'a mut PeerManager) -> Self {
         ConsensusNetAdapter { peers }
     }
 
     /// Borrow the inner `PeerManager` if the node needs direct access.
     pub fn peers(&mut self) -> &mut PeerManager {
-        &mut self.peers
+        self.peers
     }
 }
 
@@ -96,7 +109,7 @@ impl ConsensusNetAdapter {
 // Outbound API
 // ============================================================================
 
-impl ConsensusNetAdapter {
+impl<'a> ConsensusNetAdapter<'a> {
     /// Broadcast a block proposal to all connected peers.
     pub fn broadcast_proposal(
         &mut self,
@@ -130,7 +143,7 @@ impl ConsensusNetAdapter {
 // Inbound API
 // ============================================================================
 
-impl ConsensusNetAdapter {
+impl<'a> ConsensusNetAdapter<'a> {
     /// Blocking receive of one consensus-related message from any peer.
     ///
     /// For now this just wraps `PeerManager::recv_from_any` and translates
@@ -178,7 +191,7 @@ impl ConsensusNetAdapter {
 /// `PeerId(u64)` wrapper defined in `cano-node::peer`. If the consensus crate
 /// needs a different ID type in the future, conversion traits (`From`/`Into`)
 /// can be added to map between them.
-impl ConsensusNetwork for ConsensusNetAdapter {
+impl<'a> ConsensusNetwork for ConsensusNetAdapter<'a> {
     type Id = PeerId;
 
     fn broadcast_proposal(&mut self, proposal: &BlockProposal) -> Result<(), NetworkError> {

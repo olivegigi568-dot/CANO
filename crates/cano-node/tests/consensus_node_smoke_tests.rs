@@ -1,28 +1,31 @@
-//! Integration tests for ConsensusNetAdapter over real TCP sockets.
+//! Integration tests for ConsensusNode.
 //!
-//! These tests exercise the ConsensusNetAdapter's ability to:
-//!  - Broadcast and receive votes
-//!  - Broadcast and receive block proposals
-//!  - Translate NetMessage into ConsensusNetEvent
+//! These tests verify that ConsensusNode can:
+//! - Run the network service
+//! - Accept a peer
+//! - Use `with_consensus_network` to send/receive consensus messages via the
+//!   ConsensusNetwork trait, over real encrypted TCP.
 
-use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
+use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent};
 use cano_crypto::{AeadSuite, CryptoError, KemSuite, SignatureSuite, StaticCryptoProvider};
 use cano_net::{
     ClientConnectionConfig, ClientHandshakeConfig, ServerConnectionConfig, ServerHandshakeConfig,
 };
-use cano_node::consensus_net::{ConsensusNetAdapter, ConsensusNetEvent};
+use cano_node::consensus_net::ConsensusNetAdapter;
 use cano_node::peer::PeerId;
 use cano_node::peer_manager::PeerManager;
+use cano_node::{ConsensusNode, NetService, NetServiceConfig};
 use cano_wire::consensus::{BlockHeader, BlockProposal, QuorumCertificate, Vote};
 use cano_wire::io::WireEncode;
 use cano_wire::net::NetworkDelegationCert;
 
 // ============================================================================
 // Dummy Implementations for Testing
-// (copied from peer_manager_consensus_roundtrip_tests.rs to keep tests self-contained)
+// (copied from other test files to keep tests self-contained)
 // ============================================================================
 
 /// A DummyKem that produces deterministic shared secrets based on pk/sk.
@@ -362,176 +365,204 @@ fn make_dummy_block_proposal() -> BlockProposal {
 }
 
 // ============================================================================
-// ConsensusNetAdapter Roundtrip Tests
+// ConsensusNode Smoke Tests
 // ============================================================================
 
+/// Test that ConsensusNode can receive a vote event via the ConsensusNetwork trait.
+///
+/// This test:
+/// 1. Starts a server-side NetService wrapped in ConsensusNode.
+/// 2. On the client side, uses PeerManager + ConsensusNetAdapter to connect and send a vote.
+/// 3. On the server side, uses `with_consensus_network` to receive the vote.
+/// 4. Asserts the received event is `ConsensusNetworkEvent::IncomingVote`.
 #[test]
-fn broadcast_vote_roundtrip_to_single_peer() {
+fn consensus_node_receives_vote_event_via_trait() {
     let setup = create_test_setup();
     let server_cfg = setup.server_cfg;
     let client_cfg = setup.client_cfg;
-
-    // Bind a TcpListener on an OS-assigned port
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind failed");
-    let addr = listener.local_addr().expect("local_addr failed");
-    let addr_str = addr.to_string();
 
     // Create the dummy vote to send
     let dummy_vote = make_dummy_vote();
     let expected_vote = dummy_vote.clone();
 
-    // Server thread
+    // Create NetServiceConfig for the server side
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
+
+    // Create NetService and wrap in ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = net_service.local_addr().expect("local_addr failed");
+    let mut node = ConsensusNode::new(net_service);
+
+    // Server thread: step network and receive vote via with_consensus_network
     let server_handle = thread::spawn(move || {
-        // Accept a single connection
-        let (stream, _peer_addr) = listener.accept().expect("accept failed");
-
-        // Create a PeerManager and add the inbound peer
-        let mut peers = PeerManager::new();
-        peers
-            .add_inbound_peer(PeerId(1), stream, server_cfg)
-            .expect("add_inbound_peer failed");
-
-        // Wrap in ConsensusNetAdapter (borrowing)
-        let mut adapter = ConsensusNetAdapter::new(&mut peers);
-
-        // Receive a vote via recv_one()
-        let event = adapter.recv_one().expect("server recv_one failed");
-
-        // Assert we received the expected event
-        match event {
-            ConsensusNetEvent::IncomingVote { from, vote } => {
-                assert_eq!(from, PeerId(1));
-                vote
+        // First, step network until we have a connection
+        for _ in 0..1000 {
+            node.step_network().expect("step_network failed");
+            if node.net_service().peers().len() > 0 {
+                break;
             }
-            other => panic!("expected IncomingVote, got {:?}", other),
+            std::thread::sleep(Duration::from_millis(1));
         }
+
+        assert!(
+            node.net_service().peers().len() > 0,
+            "No peer connected to server"
+        );
+
+        // Now receive the vote via with_consensus_network
+        let mut received_event = None;
+        for _ in 0..1000 {
+            let result: Result<ConsensusNetworkEvent<PeerId>, _> =
+                node.with_consensus_network(|net| net.recv_one());
+
+            match result {
+                Ok(evt) => {
+                    received_event = Some(evt);
+                    break;
+                }
+                Err(_) => {
+                    // No message yet, step and try again
+                    node.step_network().expect("step_network failed");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+
+        received_event.expect("Failed to receive vote event")
     });
 
-    // Client side
-    let mut peers = PeerManager::new();
-    peers
-        .add_outbound_peer(PeerId(2), &addr_str, client_cfg)
-        .expect("add_outbound_peer failed");
+    // Client side: Connect via PeerManager and send vote via ConsensusNetAdapter
+    // First, bind a TcpListener so the client can connect
+    let mut client_peers = PeerManager::new();
+    client_peers
+        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
+        .expect("client add_outbound_peer failed");
 
-    // Wrap in ConsensusNetAdapter (borrowing)
-    let mut adapter = ConsensusNetAdapter::new(&mut peers);
+    // Create a ConsensusNetAdapter (borrowing) and use it via the trait
+    {
+        let mut adapter = ConsensusNetAdapter::new(&mut client_peers);
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+        net.broadcast_vote(&dummy_vote)
+            .expect("client broadcast_vote failed");
+    }
 
-    // Broadcast the vote
-    adapter
-        .broadcast_vote(&dummy_vote)
-        .expect("client broadcast_vote failed");
+    // Wait for server to receive
+    let event = server_handle.join().expect("server thread panicked");
 
-    // Join server thread and verify vote
-    let received_vote = server_handle.join().expect("server thread panicked");
-    assert_eq!(received_vote, expected_vote);
+    // Assert we received the expected event
+    match event {
+        ConsensusNetworkEvent::IncomingVote { from, vote } => {
+            assert_eq!(from, PeerId(1)); // Server assigns PeerId(1) to first inbound peer
+            assert_eq!(vote, expected_vote);
+        }
+        other => panic!("expected IncomingVote, got {:?}", other),
+    }
 }
 
+/// Test that ConsensusNode can receive a block proposal event via the ConsensusNetwork trait.
+///
+/// This test:
+/// 1. Starts a server-side NetService wrapped in ConsensusNode.
+/// 2. On the client side, uses PeerManager + ConsensusNetAdapter to connect and send a proposal.
+/// 3. On the server side, uses `with_consensus_network` to receive the proposal.
+/// 4. Asserts the received event is `ConsensusNetworkEvent::IncomingProposal`.
 #[test]
-fn broadcast_block_proposal_to_multiple_peers() {
-    use std::sync::mpsc;
-
-    let setup1 = create_test_setup();
-    let setup2 = create_test_setup();
-
-    // Bind two TcpListeners on OS-assigned ports
-    let listener1 = TcpListener::bind("127.0.0.1:0").expect("bind1 failed");
-    let listener2 = TcpListener::bind("127.0.0.1:0").expect("bind2 failed");
-    let addr1 = listener1.local_addr().expect("local_addr1 failed");
-    let addr2 = listener2.local_addr().expect("local_addr2 failed");
-    let addr_str1 = addr1.to_string();
-    let addr_str2 = addr2.to_string();
-
-    let server_cfg1 = setup1.server_cfg;
-    let server_cfg2 = setup2.server_cfg;
-    let client_cfg1 = setup1.client_cfg;
-    let client_cfg2 = setup2.client_cfg;
+fn consensus_node_receives_block_proposal_event_via_trait() {
+    let setup = create_test_setup();
+    let server_cfg = setup.server_cfg;
+    let client_cfg = setup.client_cfg;
 
     // Create the dummy proposal to send
     let dummy_proposal = make_dummy_block_proposal();
     let expected_proposal = dummy_proposal.clone();
 
-    // Use channels to collect what each server received
-    let (tx1, rx1) = mpsc::channel::<(PeerId, BlockProposal)>();
-    let (tx2, rx2) = mpsc::channel::<(PeerId, BlockProposal)>();
+    // Create NetServiceConfig for the server side
+    let listen_addr = "127.0.0.1:0".parse().unwrap();
+    let service_cfg = NetServiceConfig {
+        listen_addr,
+        outbound_peers: vec![],
+        client_cfg: client_cfg.clone(),
+        server_cfg,
+        max_peers: 100,
+        ping_interval: Duration::from_millis(50),
+        liveness_timeout: Duration::from_secs(60),
+    };
 
-    // Server thread 1: accepts connection, receives BlockProposal via ConsensusNetAdapter
-    let server1_handle = thread::spawn(move || {
-        let (stream, _) = listener1.accept().expect("accept1 failed");
-        let mut peers = PeerManager::new();
-        peers
-            .add_inbound_peer(PeerId(10), stream, server_cfg1)
-            .expect("add_inbound_peer1 failed");
+    // Create NetService and wrap in ConsensusNode
+    let net_service = NetService::new(service_cfg).expect("NetService::new failed");
+    let actual_addr = net_service.local_addr().expect("local_addr failed");
+    let mut node = ConsensusNode::new(net_service);
 
-        // Wrap in ConsensusNetAdapter (borrowing)
-        let mut adapter = ConsensusNetAdapter::new(&mut peers);
-
-        // Receive a proposal via recv_one()
-        let event = adapter.recv_one().expect("server1 recv_one failed");
-
-        // Extract and send the proposal
-        match event {
-            ConsensusNetEvent::IncomingProposal { from, proposal } => {
-                tx1.send((from, proposal)).expect("send to channel1 failed");
+    // Server thread: step network and receive proposal via with_consensus_network
+    let server_handle = thread::spawn(move || {
+        // First, step network until we have a connection
+        for _ in 0..1000 {
+            node.step_network().expect("step_network failed");
+            if node.net_service().peers().len() > 0 {
+                break;
             }
-            other => panic!("expected IncomingProposal, got {:?}", other),
+            std::thread::sleep(Duration::from_millis(1));
         }
+
+        assert!(
+            node.net_service().peers().len() > 0,
+            "No peer connected to server"
+        );
+
+        // Now receive the proposal via with_consensus_network
+        let mut received_event = None;
+        for _ in 0..1000 {
+            let result: Result<ConsensusNetworkEvent<PeerId>, _> =
+                node.with_consensus_network(|net| net.recv_one());
+
+            match result {
+                Ok(evt) => {
+                    received_event = Some(evt);
+                    break;
+                }
+                Err(_) => {
+                    // No message yet, step and try again
+                    node.step_network().expect("step_network failed");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+
+        received_event.expect("Failed to receive proposal event")
     });
 
-    // Server thread 2: accepts connection, receives BlockProposal via ConsensusNetAdapter
-    let server2_handle = thread::spawn(move || {
-        let (stream, _) = listener2.accept().expect("accept2 failed");
-        let mut peers = PeerManager::new();
-        peers
-            .add_inbound_peer(PeerId(11), stream, server_cfg2)
-            .expect("add_inbound_peer2 failed");
+    // Client side: Connect via PeerManager and send proposal via ConsensusNetAdapter
+    let mut client_peers = PeerManager::new();
+    client_peers
+        .add_outbound_peer(PeerId(100), &actual_addr.to_string(), client_cfg)
+        .expect("client add_outbound_peer failed");
 
-        // Wrap in ConsensusNetAdapter (borrowing)
-        let mut adapter = ConsensusNetAdapter::new(&mut peers);
+    // Create a ConsensusNetAdapter (borrowing) and use it via the trait
+    {
+        let mut adapter = ConsensusNetAdapter::new(&mut client_peers);
+        let net: &mut dyn ConsensusNetwork<Id = PeerId> = &mut adapter;
+        net.broadcast_proposal(&dummy_proposal)
+            .expect("client broadcast_proposal failed");
+    }
 
-        // Receive a proposal via recv_one()
-        let event = adapter.recv_one().expect("server2 recv_one failed");
+    // Wait for server to receive
+    let event = server_handle.join().expect("server thread panicked");
 
-        // Extract and send the proposal
-        match event {
-            ConsensusNetEvent::IncomingProposal { from, proposal } => {
-                tx2.send((from, proposal)).expect("send to channel2 failed");
-            }
-            other => panic!("expected IncomingProposal, got {:?}", other),
+    // Assert we received the expected event
+    match event {
+        ConsensusNetworkEvent::IncomingProposal { from, proposal } => {
+            assert_eq!(from, PeerId(1)); // Server assigns PeerId(1) to first inbound peer
+            assert_eq!(proposal, expected_proposal);
         }
-    });
-
-    // Client: Create a PeerManager with two outbound peers
-    let mut peers = PeerManager::new();
-    peers
-        .add_outbound_peer(PeerId(1), &addr_str1, client_cfg1)
-        .expect("add_outbound_peer1 failed");
-    peers
-        .add_outbound_peer(PeerId(2), &addr_str2, client_cfg2)
-        .expect("add_outbound_peer2 failed");
-
-    assert_eq!(peers.len(), 2);
-
-    // Wrap in ConsensusNetAdapter (borrowing)
-    let mut adapter = ConsensusNetAdapter::new(&mut peers);
-
-    // Broadcast the BlockProposal to all peers
-    adapter
-        .broadcast_proposal(&dummy_proposal)
-        .expect("client broadcast_proposal failed");
-
-    // Wait for server threads to finish
-    server1_handle.join().expect("server1 thread panicked");
-    server2_handle.join().expect("server2 thread panicked");
-
-    // Verify both servers received the same BlockProposal
-    let (from1, proposal1) = rx1.recv().expect("recv from channel1 failed");
-    let (from2, proposal2) = rx2.recv().expect("recv from channel2 failed");
-
-    // Check that proposals match
-    assert_eq!(proposal1, expected_proposal);
-    assert_eq!(proposal2, expected_proposal);
-
-    // Check that `from` is one of the expected peer IDs
-    assert_eq!(from1, PeerId(10));
-    assert_eq!(from2, PeerId(11));
+        other => panic!("expected IncomingProposal, got {:?}", other),
+    }
 }
