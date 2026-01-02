@@ -5,6 +5,7 @@
 //! - Tracks `locked_qc` (latest QC on a locked block)
 //! - Tracks the latest committed block id via the 3-chain commit rule
 //! - Integrates `VoteAccumulator` for QC formation
+//! - Detects equivocation (double-voting) and tracks metrics
 //!
 //! # Design Note
 //!
@@ -13,11 +14,13 @@
 //! - Basic vote accumulation and QC formation
 //! - 3-chain commit rule: when three consecutive QCs are formed (G → P → B),
 //!   the grandparent block G is committed
+//! - Equivocation detection: detects when a validator votes for different blocks
+//!   in the same view
 //!
 //! It does NOT yet implement:
 //! - Timeouts or view-change mechanics
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::block_state::BlockNode;
 use crate::qc::{QcValidationError, QuorumCertificate};
@@ -36,6 +39,25 @@ pub struct CommittedEntry<BlockIdT> {
     pub height: u64,
 }
 
+/// Outcome of recording a vote in the history tracker.
+///
+/// This enum is used internally to distinguish between:
+/// - First time we see a (view, validator) pair
+/// - Duplicate vote for the same block (benign)
+/// - Equivocation: different block in the same view
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VoteHistoryOutcome<BlockIdT> {
+    /// First time we see this (view, validator) pair.
+    FirstVote,
+    /// Duplicate vote for the same block_id (benign duplicate).
+    DuplicateSameBlock,
+    /// Equivocation: same (view, validator), different block.
+    Equivocation {
+        /// The block the validator previously voted for.
+        previous_block: BlockIdT,
+    },
+}
+
 /// HotStuff state machine managing block tree, locking, and commit tracking.
 ///
 /// This struct maintains the consensus state for a HotStuff-like protocol:
@@ -44,6 +66,7 @@ pub struct CommittedEntry<BlockIdT> {
 /// - Latest committed block id
 /// - Vote accumulator for QC formation
 /// - Validator set for quorum checks
+/// - Equivocation detection and metrics
 ///
 /// # Type Parameter
 ///
@@ -74,6 +97,16 @@ where
 
     /// Validator set for quorum checks.
     validators: ConsensusValidatorSet,
+
+    /// For each (view, validator), remember which block they voted for.
+    /// Used for equivocation detection.
+    votes_by_view: HashMap<(u64, ValidatorId), BlockIdT>,
+
+    /// Count of detected equivocations (double-votes per view).
+    equivocations_detected: u64,
+
+    /// Set of validators that ever equivocated (per this engine instance).
+    equivocating_validators: HashSet<ValidatorId>,
 }
 
 impl<BlockIdT> HotStuffStateEngine<BlockIdT>
@@ -87,6 +120,7 @@ where
     /// - No locked QC
     /// - No committed block
     /// - Empty vote accumulator
+    /// - Empty equivocation tracking
     pub fn new(validators: ConsensusValidatorSet) -> Self {
         HotStuffStateEngine {
             blocks: HashMap::new(),
@@ -96,6 +130,9 @@ where
             commit_log: Vec::new(),
             votes: VoteAccumulator::new(),
             validators,
+            votes_by_view: HashMap::new(),
+            equivocations_detected: 0,
+            equivocating_validators: HashSet::new(),
         }
     }
 
@@ -122,6 +159,16 @@ where
     /// Get a reference to the validator set.
     pub fn validators(&self) -> &ConsensusValidatorSet {
         &self.validators
+    }
+
+    /// Get the count of detected equivocations (double-votes per view).
+    pub fn equivocations_detected(&self) -> u64 {
+        self.equivocations_detected
+    }
+
+    /// Get a reference to the set of validators that have equivocated.
+    pub fn equivocating_validators(&self) -> &HashSet<ValidatorId> {
+        &self.equivocating_validators
     }
 
     /// Get a block node by its id, if known.
@@ -176,13 +223,49 @@ where
     // Hook 2: Vote ingestion → QC → locking/commit
     // ========================================================================
 
+    /// Internal helper to record vote history and detect equivocation.
+    ///
+    /// This method tracks which block each (view, validator) pair has voted for.
+    /// It returns the outcome of this check:
+    /// - `FirstVote`: First time we see this (view, validator) pair
+    /// - `DuplicateSameBlock`: Same validator voted for the same block in the same view
+    /// - `Equivocation`: Same validator voted for a different block in the same view
+    fn record_vote_history(
+        &mut self,
+        voter: ValidatorId,
+        view: u64,
+        block_id: &BlockIdT,
+    ) -> VoteHistoryOutcome<BlockIdT> {
+        let key = (view, voter);
+        match self.votes_by_view.get(&key) {
+            None => {
+                // First time we see this (view, validator) pair.
+                self.votes_by_view.insert(key, block_id.clone());
+                VoteHistoryOutcome::FirstVote
+            }
+            Some(prev_block) => {
+                if prev_block == block_id {
+                    // Same block as before: benign duplicate.
+                    VoteHistoryOutcome::DuplicateSameBlock
+                } else {
+                    // Different block: equivocation.
+                    VoteHistoryOutcome::Equivocation {
+                        previous_block: prev_block.clone(),
+                    }
+                }
+            }
+        }
+    }
+
     /// Ingest a vote and if quorum is reached, form and process a QC.
     ///
     /// This method:
-    /// 1. Validates that the voter is a member of the validator set
-    /// 2. Records the vote in the accumulator
-    /// 3. Attempts to form a QC if quorum is reached
-    /// 4. If a QC is formed, applies locking logic
+    /// 1. Detects equivocation (same validator voting for different blocks in the same view)
+    /// 2. If equivocation is detected, records metrics and ignores the vote
+    /// 3. Validates that the voter is a member of the validator set
+    /// 4. Records the vote in the accumulator
+    /// 5. Attempts to form a QC if quorum is reached
+    /// 6. If a QC is formed, applies locking logic
     ///
     /// # Arguments
     ///
@@ -193,7 +276,8 @@ where
     /// # Returns
     ///
     /// - `Ok(Some(qc))` if a QC was formed and applied
-    /// - `Ok(None)` if the vote was recorded but no QC formed yet
+    /// - `Ok(None)` if the vote was recorded but no QC formed yet, or if the vote
+    ///   was an equivocation and was ignored
     /// - `Err(QcValidationError)` if the voter is not a member
     pub fn on_vote(
         &mut self,
@@ -201,14 +285,29 @@ where
         view: u64,
         block_id: &BlockIdT,
     ) -> Result<Option<QuorumCertificate<BlockIdT>>, QcValidationError> {
-        // 1. Ingest vote into accumulator (membership & duplicate checks).
+        // 1. Equivocation detection.
+        match self.record_vote_history(voter, view, block_id) {
+            VoteHistoryOutcome::Equivocation { previous_block: _ } => {
+                // Record metrics and ignore this vote for QC formation.
+                self.equivocations_detected += 1;
+                self.equivocating_validators.insert(voter);
+                // For now we silently ignore; later we may want to expose this
+                // via a separate error or event.
+                return Ok(None);
+            }
+            VoteHistoryOutcome::FirstVote | VoteHistoryOutcome::DuplicateSameBlock => {
+                // Proceed to feed vote into accumulator.
+            }
+        }
+
+        // 2. Ingest vote into accumulator (membership & duplicate checks).
         let _is_new = self.votes.on_vote(&self.validators, voter, view, block_id)?;
 
-        // 2. Attempt to form QC for this (view, block_id).
+        // 3. Attempt to form QC for this (view, block_id).
         let qc = self.votes.maybe_qc_for(&self.validators, view, block_id)?;
 
         if let Some(ref qc) = qc {
-            // 3. Apply locking logic with the new QC.
+            // 4. Apply locking logic with the new QC.
             self.on_qc(qc)?;
         }
 
