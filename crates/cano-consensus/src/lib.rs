@@ -36,6 +36,7 @@ pub mod driver;
 pub mod ids;
 pub mod multi_sim;
 pub mod network;
+pub mod qc;
 pub mod sim;
 pub mod validator_set;
 
@@ -44,13 +45,14 @@ pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, T
 pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
+pub use qc::{QcValidationError, QuorumCertificate};
 pub use sim::SingleNodeSim;
 pub use validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
 
 
 use cano_crypto::CryptoProvider;
 use cano_hash::vote_digest;
-use cano_wire::consensus::{BlockProposal, QuorumCertificate, Vote};
+use cano_wire::consensus::{BlockProposal, QuorumCertificate as WireQuorumCertificate, Vote};
 
 /// Information about a single consensus validator that the verifier needs.
 #[derive(Clone, Debug)]
@@ -570,7 +572,7 @@ pub fn verify_vote(
 pub fn verify_quorum_certificate(
     vs: &ValidatorSet,
     crypto: &dyn CryptoProvider,
-    qc: &QuorumCertificate,
+    qc: &WireQuorumCertificate,
 ) -> Result<(), ConsensusVerifyError> {
     let mut total_power: u64 = 0;
     let need = vs.qc_threshold;
