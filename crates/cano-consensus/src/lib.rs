@@ -34,6 +34,7 @@
 //! - `SingleNodeSim`: minimal harness for testing consensus with MockConsensusNetwork
 
 pub mod adversarial_multi_sim;
+pub mod basic_hotstuff_engine;
 pub mod block_state;
 pub mod driver;
 pub mod hotstuff_state_engine;
@@ -46,6 +47,7 @@ pub mod validator_set;
 pub mod vote_accumulator;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
+pub use basic_hotstuff_engine::BasicHotStuffEngine;
 pub use block_state::BlockNode;
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, ToValidatorId, ValidatorContext};
 pub use hotstuff_state_engine::HotStuffStateEngine;
