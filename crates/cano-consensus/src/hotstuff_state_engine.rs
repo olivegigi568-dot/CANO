@@ -197,8 +197,14 @@ where
             self.locked_qc = Some(qc.clone());
         }
 
-        // For T54, we leave commit logic for a future task.
-        // committed_block stays None.
+        // TODO(future task): Implement 3-chain commit rule.
+        // The commit logic should:
+        // 1. Track the "3-chain" relationship: grandparent -> parent -> child
+        // 2. When a QC is formed for a block whose justify_qc points to a parent,
+        //    and that parent's justify_qc points to a grandparent with consecutive views,
+        //    commit the grandparent block.
+        // 3. Update committed_block to the newly committed block id.
+        // For T54, committed_block stays None.
 
         Ok(())
     }
