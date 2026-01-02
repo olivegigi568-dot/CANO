@@ -82,7 +82,7 @@ fn single_node_sim_routes_vote_via_driver() {
 
     // 3. Create a HotStuffDriver over a HotStuffState engine
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // 4. Wrap into SingleNodeSim
     let mut sim = SingleNodeSim::new(net, driver);
@@ -119,7 +119,7 @@ fn single_node_sim_routes_proposal_via_driver() {
 
     // 3. Create a HotStuffDriver over a HotStuffState engine
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // 4. Wrap into SingleNodeSim
     let mut sim = SingleNodeSim::new(net, driver);
@@ -146,7 +146,7 @@ fn single_node_sim_no_event_is_noop() {
 
     // 2. Create a HotStuffDriver over a HotStuffState engine
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // 3. Wrap into SingleNodeSim
     let mut sim = SingleNodeSim::new(net, driver);
@@ -195,7 +195,7 @@ fn single_node_sim_processes_multiple_events_in_sequence() {
 
     // Create driver and sim
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
     let mut sim = SingleNodeSim::new(net, driver);
 
     // Process all events by calling step_once() for each enqueued event
@@ -248,7 +248,7 @@ fn single_node_sim_rejects_vote_from_unknown_validator() {
 
     // Create driver with validator context
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::with_validators(engine, ctx);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(engine, ctx);
     let mut sim = SingleNodeSim::new(net, driver);
 
     // Run step_once()
@@ -299,7 +299,7 @@ fn single_node_sim_accepts_vote_from_known_validator() {
 
     // Create driver with validator context
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::with_validators(engine, ctx);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(engine, ctx);
     let mut sim = SingleNodeSim::new(net, driver);
 
     // Run step_once()

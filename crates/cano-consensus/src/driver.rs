@@ -16,6 +16,7 @@
 
 use crate::ids::ValidatorId;
 use crate::network::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
+use crate::qc::QuorumCertificate;
 use crate::validator_set::ConsensusValidatorSet;
 use cano_wire::consensus::{BlockProposal, Vote};
 
@@ -155,11 +156,12 @@ where
 /// on correctly routing events to the underlying engine; full proposal
 /// generation and vote emission will be added in future tasks.
 ///
-/// # Type Parameter
+/// # Type Parameters
 ///
-/// - `E`: The underlying consensus engine type (typically `HotStuffState`)
+/// - `E`: The underlying consensus engine type (typically `HotStuffState` or `HotStuffStateEngine`)
+/// - `BlockIdT`: The block identifier type (typically `[u8; 32]`)
 #[derive(Debug)]
-pub struct HotStuffDriver<E> {
+pub struct HotStuffDriver<E, BlockIdT = [u8; 32]> {
     /// The underlying consensus engine.
     engine: E,
     /// Optional validator context for membership checks.
@@ -172,9 +174,16 @@ pub struct HotStuffDriver<E> {
     rejected_votes: u64,
     /// Counter for rejected proposals from non-members (for testing/debugging).
     rejected_proposals: u64,
+    /// Counter for QCs formed (for testing/debugging).
+    qcs_formed: u64,
+    /// Last QC formed, if any.
+    last_qc: Option<QuorumCertificate<BlockIdT>>,
 }
 
-impl<E> HotStuffDriver<E> {
+impl<E, BlockIdT> HotStuffDriver<E, BlockIdT>
+where
+    BlockIdT: Clone,
+{
     /// Create a new `HotStuffDriver` wrapping the given engine.
     ///
     /// This constructor creates a driver without a validator context.
@@ -187,6 +196,8 @@ impl<E> HotStuffDriver<E> {
             proposals_received: 0,
             rejected_votes: 0,
             rejected_proposals: 0,
+            qcs_formed: 0,
+            last_qc: None,
         }
     }
 
@@ -202,6 +213,8 @@ impl<E> HotStuffDriver<E> {
             proposals_received: 0,
             rejected_votes: 0,
             rejected_proposals: 0,
+            qcs_formed: 0,
+            last_qc: None,
         }
     }
 
@@ -238,6 +251,25 @@ impl<E> HotStuffDriver<E> {
     /// Get the number of rejected proposals from non-members.
     pub fn rejected_proposals(&self) -> u64 {
         self.rejected_proposals
+    }
+
+    /// Get the number of QCs formed.
+    pub fn qcs_formed(&self) -> u64 {
+        self.qcs_formed
+    }
+
+    /// Get the last QC formed, if any.
+    pub fn last_qc(&self) -> Option<&QuorumCertificate<BlockIdT>> {
+        self.last_qc.as_ref()
+    }
+
+    /// Record that a QC was formed.
+    ///
+    /// This method is called internally when a QC is formed, but can also
+    /// be called externally to record QCs formed outside the driver.
+    pub fn record_qc(&mut self, qc: QuorumCertificate<BlockIdT>) {
+        self.qcs_formed += 1;
+        self.last_qc = Some(qc);
     }
 
     /// Check if a validator ID is a member when validator context is available.
@@ -279,10 +311,11 @@ impl ToValidatorId for u64 {
 // ConsensusEngineDriver implementation for HotStuffDriver
 // ============================================================================
 
-impl<E, N> ConsensusEngineDriver<N> for HotStuffDriver<E>
+impl<E, N, BlockIdT> ConsensusEngineDriver<N> for HotStuffDriver<E, BlockIdT>
 where
     N: ConsensusNetwork,
     N::Id: ToValidatorId,
+    BlockIdT: Clone,
 {
     fn step(
         &mut self,
@@ -396,7 +429,7 @@ mod tests {
     #[test]
     fn driver_new_creates_wrapper_with_zero_counters() {
         let engine = HotStuffState::new_at_height(1);
-        let driver = HotStuffDriver::new(engine);
+        let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
         assert_eq!(driver.votes_received(), 0);
         assert_eq!(driver.proposals_received(), 0);
@@ -406,7 +439,7 @@ mod tests {
     #[test]
     fn driver_step_with_no_event_returns_empty_actions() {
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
         let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
 
         let actions = driver.step(&mut net, None).unwrap();
@@ -419,7 +452,7 @@ mod tests {
     #[test]
     fn driver_receives_vote_event_increments_counter() {
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
         let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
 
         let vote = make_dummy_vote(1, 0);
@@ -436,7 +469,7 @@ mod tests {
     #[test]
     fn driver_receives_proposal_event_increments_counter() {
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
         let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
 
         let proposal = make_dummy_proposal(1, 0);
@@ -456,7 +489,7 @@ mod tests {
     #[test]
     fn driver_handles_multiple_events_in_sequence() {
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
         let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
 
         // First event: vote
@@ -486,7 +519,7 @@ mod tests {
     #[test]
     fn driver_engine_accessors_work() {
         let engine = HotStuffState::new_at_height(5);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
         assert_eq!(driver.engine().height(), 5);
 
@@ -529,7 +562,7 @@ mod tests {
         let ctx = ValidatorContext::new(set);
 
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::with_validators(engine, ctx);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(engine, ctx);
         let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
         // Send a vote from a non-member (validator 999)
@@ -561,7 +594,7 @@ mod tests {
         let ctx = ValidatorContext::new(set);
 
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::with_validators(engine, ctx);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(engine, ctx);
         let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
         // Send a vote from a member (validator 1)
@@ -593,7 +626,7 @@ mod tests {
         let ctx = ValidatorContext::new(set);
 
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::with_validators(engine, ctx);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(engine, ctx);
         let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
         // Send a proposal from a non-member (validator 999)
@@ -616,7 +649,7 @@ mod tests {
     fn driver_without_validators_accepts_all_votes() {
         // Driver without validator context should accept all votes (permissive mode)
         let engine = HotStuffState::new_at_height(1);
-        let mut driver = HotStuffDriver::new(engine);
+        let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
         let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
 
         // Send a vote from any validator (even unknown)
