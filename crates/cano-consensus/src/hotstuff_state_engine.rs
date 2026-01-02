@@ -281,9 +281,21 @@ where
         let should_commit = match &self.committed_block {
             None => true,
             Some(committed_id) => {
-                // Only commit if G is different from current committed block
-                // In a single-chain model, we allow overwriting to the newer committed block
-                committed_id != &g_id
+                if committed_id == &g_id {
+                    // Already committed this block
+                    false
+                } else {
+                    // Check if G's view is higher than the current committed block's view
+                    // to ensure we don't go backwards
+                    match self.blocks.get(committed_id) {
+                        Some(committed_node) => g_view > committed_node.view,
+                        None => {
+                            // Current committed block not in our tree (shouldn't happen normally)
+                            // Allow commit to move forward
+                            true
+                        }
+                    }
+                }
             }
         };
 
