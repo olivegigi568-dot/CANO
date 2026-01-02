@@ -35,11 +35,16 @@ pub struct BlockNode<BlockIdT> {
     /// QC that justifies this block (the QC for its parent).
     /// This may be None for genesis or early blocks.
     pub justify_qc: Option<QuorumCertificate<BlockIdT>>,
-    // Future extensions: payload hash, proposer, timestamp, etc.
+    /// QC formed *for this block* (when votes reach quorum).
+    /// This is set when a QC is formed that references this block.
+    pub own_qc: Option<QuorumCertificate<BlockIdT>>,
 }
 
 impl<BlockIdT: Clone> BlockNode<BlockIdT> {
     /// Create a new `BlockNode` with the given fields.
+    ///
+    /// The `own_qc` field is initialized to `None`. It will be set when
+    /// a QC is formed for this block.
     pub fn new(
         id: BlockIdT,
         view: u64,
@@ -51,6 +56,7 @@ impl<BlockIdT: Clone> BlockNode<BlockIdT> {
             view,
             parent_id,
             justify_qc,
+            own_qc: None,
         }
     }
 }
