@@ -20,6 +20,7 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use cano_consensus::validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
 use cano_consensus::ValidatorId;
 use cano_net::{ClientConnectionConfig, ServerConnectionConfig};
 
@@ -59,7 +60,28 @@ pub struct NodeValidatorConfig {
     pub remotes: Vec<RemoteValidatorConfig>,
 }
 
-/// Deterministically constructs a `NetServiceConfig` and `PeerValidatorMap`
+impl NodeValidatorConfig {
+    /// Builds a `ConsensusValidatorSet` suitable for use with `BasicHotStuffEngine`.
+    ///
+    /// For now this assumes all validators have equal voting_power = 1.
+    /// This is a test-only helper; production code may use different logic.
+    pub fn build_consensus_validator_set_for_tests(&self) -> ConsensusValidatorSet {
+        let entries = std::iter::once(ValidatorSetEntry {
+            id: self.local.validator_id,
+            voting_power: 1,
+        })
+        .chain(self.remotes.iter().map(|r| ValidatorSetEntry {
+            id: r.validator_id,
+            voting_power: 1,
+        }))
+        .collect::<Vec<_>>();
+
+        ConsensusValidatorSet::new(entries)
+            .expect("NodeValidatorConfig should not create duplicate validator ids")
+    }
+}
+
+/// Deterministically constructsa `NetServiceConfig` and `PeerValidatorMap`
 /// from a `NodeValidatorConfig`.
 ///
 /// This is a test-only helper function that:
