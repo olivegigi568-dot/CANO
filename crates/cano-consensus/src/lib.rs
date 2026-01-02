@@ -12,6 +12,8 @@
 //! HotStuff-style locking and commit tracking:
 //! - `HotStuffState`: local consensus state with locking and commit tracking
 //! - `hotstuff_decide_and_maybe_record_vote`: HotStuff-aware voting decision function
+//! - `HotStuffStateEngine`: state machine with QC-based locking and vote accumulation
+//! - `BlockNode`: minimal block representation in the HotStuff block tree
 //!
 //! Consensus networking abstraction:
 //! - `ConsensusNetwork`: trait for abstracting network operations
@@ -32,7 +34,9 @@
 //! - `SingleNodeSim`: minimal harness for testing consensus with MockConsensusNetwork
 
 pub mod adversarial_multi_sim;
+pub mod block_state;
 pub mod driver;
+pub mod hotstuff_state_engine;
 pub mod ids;
 pub mod multi_sim;
 pub mod network;
@@ -42,7 +46,9 @@ pub mod validator_set;
 pub mod vote_accumulator;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
+pub use block_state::BlockNode;
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, ToValidatorId, ValidatorContext};
+pub use hotstuff_state_engine::HotStuffStateEngine;
 pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};

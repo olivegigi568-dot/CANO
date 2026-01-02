@@ -9,8 +9,8 @@
 //! ```no_run
 //! use cano_consensus::{MockConsensusNetwork, HotStuffDriver, HotStuffState, MultiNodeSim};
 //!
-//! // Create nodes
-//! let nodes = vec![
+//! // Create nodes with explicit type annotations
+//! let nodes: Vec<(u64, MockConsensusNetwork<u64>, HotStuffDriver<HotStuffState, [u8; 32]>)> = vec![
 //!     (1u64, MockConsensusNetwork::new(), HotStuffDriver::new(HotStuffState::new_at_height(1))),
 //!     (2u64, MockConsensusNetwork::new(), HotStuffDriver::new(HotStuffState::new_at_height(1))),
 //!     (3u64, MockConsensusNetwork::new(), HotStuffDriver::new(HotStuffState::new_at_height(1))),
