@@ -38,6 +38,8 @@ pub struct BlockNode<BlockIdT> {
     /// QC formed *for this block* (when votes reach quorum).
     /// This is set when a QC is formed that references this block.
     pub own_qc: Option<QuorumCertificate<BlockIdT>>,
+    /// Height of this block in the chain from genesis.
+    pub height: u64,
 }
 
 impl<BlockIdT: Clone> BlockNode<BlockIdT> {
@@ -50,6 +52,7 @@ impl<BlockIdT: Clone> BlockNode<BlockIdT> {
         view: u64,
         parent_id: Option<BlockIdT>,
         justify_qc: Option<QuorumCertificate<BlockIdT>>,
+        height: u64,
     ) -> Self {
         BlockNode {
             id,
@@ -57,6 +60,7 @@ impl<BlockIdT: Clone> BlockNode<BlockIdT> {
             parent_id,
             justify_qc,
             own_qc: None,
+            height,
         }
     }
 }

@@ -50,7 +50,7 @@ pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, Partit
 pub use basic_hotstuff_engine::BasicHotStuffEngine;
 pub use block_state::BlockNode;
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, ToValidatorId, ValidatorContext};
-pub use hotstuff_state_engine::HotStuffStateEngine;
+pub use hotstuff_state_engine::{CommittedEntry, HotStuffStateEngine};
 pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};

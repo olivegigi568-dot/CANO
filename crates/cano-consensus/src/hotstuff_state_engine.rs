@@ -25,6 +25,17 @@ use crate::validator_set::ConsensusValidatorSet;
 use crate::vote_accumulator::VoteAccumulator;
 use crate::ids::ValidatorId;
 
+/// An entry in the commit log recording a committed block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedEntry<BlockIdT> {
+    /// The block identifier that was committed.
+    pub block_id: BlockIdT,
+    /// The view at which the block was proposed.
+    pub view: u64,
+    /// The height of the block in the chain from genesis.
+    pub height: u64,
+}
+
 /// HotStuff state machine managing block tree, locking, and commit tracking.
 ///
 /// This struct maintains the consensus state for a HotStuff-like protocol:
@@ -52,6 +63,12 @@ where
     /// Latest committed block id, if any.
     committed_block: Option<BlockIdT>,
 
+    /// Latest committed height, if any.
+    committed_height: Option<u64>,
+
+    /// Simple append-only commit log for tests/inspection.
+    commit_log: Vec<CommittedEntry<BlockIdT>>,
+
     /// Vote accumulator for QC formation.
     votes: VoteAccumulator<BlockIdT>,
 
@@ -75,6 +92,8 @@ where
             blocks: HashMap::new(),
             locked_qc: None,
             committed_block: None,
+            committed_height: None,
+            commit_log: Vec::new(),
             votes: VoteAccumulator::new(),
             validators,
         }
@@ -88,6 +107,16 @@ where
     /// Get the latest committed block id, if any.
     pub fn committed_block(&self) -> Option<&BlockIdT> {
         self.committed_block.as_ref()
+    }
+
+    /// Get the latest committed height, if any.
+    pub fn committed_height(&self) -> Option<u64> {
+        self.committed_height
+    }
+
+    /// Get the commit log (sequence of committed blocks).
+    pub fn commit_log(&self) -> &[CommittedEntry<BlockIdT>] {
+        &self.commit_log
     }
 
     /// Get a reference to the validator set.
@@ -113,6 +142,8 @@ where
     ///
     /// This method adds or updates a block in the internal block tree.
     /// It can be used when processing proposals to track known blocks.
+    /// The block's height is computed as parent's height + 1, or 0 if no parent
+    /// (genesis) or if the parent is not yet registered.
     ///
     /// # Arguments
     ///
@@ -127,7 +158,17 @@ where
         parent_id: Option<BlockIdT>,
         justify_qc: Option<QuorumCertificate<BlockIdT>>,
     ) {
-        let node = BlockNode::new(id.clone(), view, parent_id, justify_qc);
+        // Compute height: 0 if no parent, otherwise parent.height + 1
+        let height = match parent_id.as_ref() {
+            None => 0,
+            Some(pid) => self
+                .blocks
+                .get(pid)
+                .map(|p| p.height + 1)
+                .unwrap_or(0),
+        };
+
+        let node = BlockNode::new(id.clone(), view, parent_id, justify_qc, height);
         self.blocks.insert(id, node);
     }
 
@@ -250,7 +291,7 @@ where
         };
 
         // 3. Find G = parent of P (grandparent of B).
-        let (g_id, g_view) = {
+        let (g_id, g_view, g_height) = {
             let p = match self.blocks.get(&p_id) {
                 Some(node) => node,
                 None => return,
@@ -265,7 +306,7 @@ where
                     if g.own_qc.is_none() {
                         return;
                     }
-                    (id.clone(), g.view)
+                    (id.clone(), g.view, g.height)
                 }
                 None => return, // no grandparent → no 3-chain
             }
@@ -277,7 +318,12 @@ where
         }
 
         // 5. Commit G if it is "ahead" of current committed_block (monotonic).
-        // For view-based monotonicity, we compare views to ensure we don't go backwards.
+        // For height-based monotonicity, we compare heights to ensure we don't go backwards.
+        let height_ok = match self.committed_height {
+            None => true,
+            Some(h) => g_height > h,
+        };
+
         let should_commit = match &self.committed_block {
             None => true,
             Some(committed_id) => {
@@ -299,8 +345,22 @@ where
             }
         };
 
-        if should_commit {
-            self.committed_block = Some(g_id);
+        if should_commit && height_ok {
+            self.committed_block = Some(g_id.clone());
+            self.committed_height = Some(g_height);
+
+            // Avoid duplicate log entries: only push if last entry is different.
+            let push_entry = match self.commit_log.last() {
+                None => true,
+                Some(last) => last.block_id != g_id,
+            };
+            if push_entry {
+                self.commit_log.push(CommittedEntry {
+                    block_id: g_id,
+                    view: g_view,
+                    height: g_height,
+                });
+            }
         }
     }
 
