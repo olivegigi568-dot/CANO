@@ -19,8 +19,8 @@
 //! - Equivocation handling
 //! - Leader rotation policies beyond simple round-robin
 
-use crate::driver::ConsensusEngineAction;
-use crate::hotstuff_state_engine::HotStuffStateEngine;
+use crate::driver::{ConsensusEngineAction, HasCommitLog};
+use crate::hotstuff_state_engine::{CommittedEntry, HotStuffStateEngine};
 use crate::ids::ValidatorId;
 use crate::qc::{QcValidationError, QuorumCertificate};
 use crate::validator_set::ConsensusValidatorSet;
@@ -139,6 +139,11 @@ where
         self.state.validators()
     }
 
+    /// Get the commit log (sequence of committed blocks).
+    pub fn commit_log(&self) -> &[CommittedEntry<BlockIdT>] {
+        self.state.commit_log()
+    }
+
     /// Advance to the next view.
     ///
     /// This resets the `proposed_in_view` and `voted_in_view` flags.
@@ -146,6 +151,19 @@ where
         self.current_view += 1;
         self.proposed_in_view = false;
         self.voted_in_view = false;
+    }
+}
+
+// ============================================================================
+// HasCommitLog implementation for BasicHotStuffEngine
+// ============================================================================
+
+impl<BlockIdT> HasCommitLog<BlockIdT> for BasicHotStuffEngine<BlockIdT>
+where
+    BlockIdT: Eq + std::hash::Hash + Clone,
+{
+    fn commit_log(&self) -> &[CommittedEntry<BlockIdT>] {
+        self.state.commit_log()
     }
 }
 
