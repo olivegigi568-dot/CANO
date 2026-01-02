@@ -18,6 +18,7 @@
 pub mod consensus_net;
 pub mod consensus_node;
 pub mod consensus_sim;
+pub mod hotstuff_node_sim;
 pub mod identity_map;
 pub mod net_service;
 pub mod peer;
@@ -28,6 +29,7 @@ pub mod validator_config;
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
 pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError};
 pub use consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
+pub use hotstuff_node_sim::{NodeHotstuffHarness, NodeHotstuffHarnessError};
 pub use identity_map::PeerValidatorMap;
 pub use net_service::{NetService, NetServiceConfig, NetServiceError};
 pub use peer::{Peer, PeerId};
