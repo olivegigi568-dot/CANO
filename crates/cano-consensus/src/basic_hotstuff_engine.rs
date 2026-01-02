@@ -315,6 +315,13 @@ impl BasicHotStuffEngine<[u8; 32]> {
         self.state
             .register_block(block_id, view, parent_id, justify_qc);
 
+        // Enforce locked-block safety: only vote if this block is on a chain
+        // that includes the locked block as an ancestor (or if there is no lock yet).
+        if !self.state.is_safe_to_vote_on_block(&block_id) {
+            // Proposal is on a conflicting fork; do not vote.
+            return None;
+        }
+
         // Create and ingest our own vote
         // Errors here would indicate a bug in our code (voting for a block we just registered)
         let vote_result = self.state.on_vote(self.local_id, view, &block_id);
