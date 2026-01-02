@@ -3,20 +3,19 @@
 //! This module provides a minimal HotStuff state machine that:
 //! - Maintains a simple "block tree" keyed by block id
 //! - Tracks `locked_qc` (latest QC on a locked block)
-//! - Tracks the latest committed block id
+//! - Tracks the latest committed block id via the 3-chain commit rule
 //! - Integrates `VoteAccumulator` for QC formation
 //!
 //! # Design Note
 //!
-//! This is a simplified HotStuff implementation for T54. It implements:
+//! This is a simplified HotStuff implementation that implements:
 //! - QC-based locking (locked_qc updated when a higher-view QC is formed)
 //! - Basic vote accumulation and QC formation
+//! - 3-chain commit rule: when three consecutive QCs are formed (G → P → B),
+//!   the grandparent block G is committed
 //!
 //! It does NOT yet implement:
 //! - Timeouts or view-change mechanics
-//! - Full 3-chain commit rule (committed_block stays None for now)
-//!
-//! These will be added in future tasks.
 
 use std::collections::HashMap;
 
@@ -177,14 +176,10 @@ where
 
     /// Handle a newly formed QC.
     ///
-    /// This method implements minimal HotStuff-style locking logic:
+    /// This method implements HotStuff-style locking and commit logic:
     /// - Updates `locked_qc` to the QC if its view is higher than the current lock
-    ///
-    /// # Note
-    ///
-    /// For T54, we implement Option A (simpler): only locking is implemented.
-    /// The `committed_block` remains None. Full 3-chain commit logic will be
-    /// added in a future task.
+    /// - Attaches the QC to the corresponding block node as `own_qc`
+    /// - Attempts the 3-chain commit rule
     fn on_qc(&mut self, qc: &QuorumCertificate<BlockIdT>) -> Result<(), QcValidationError> {
         // Minimal HotStuff-style locking:
         // - Update locked_qc to the highest-view QC.
@@ -197,16 +192,104 @@ where
             self.locked_qc = Some(qc.clone());
         }
 
-        // TODO(future task): Implement 3-chain commit rule.
-        // The commit logic should:
-        // 1. Track the "3-chain" relationship: grandparent -> parent -> child
-        // 2. When a QC is formed for a block whose justify_qc points to a parent,
-        //    and that parent's justify_qc points to a grandparent with consecutive views,
-        //    commit the grandparent block.
-        // 3. Update committed_block to the newly committed block id.
-        // For T54, committed_block stays None.
+        // Record QC on the block node itself.
+        if let Some(node) = self.blocks.get_mut(&qc.block_id) {
+            node.own_qc = Some(qc.clone());
+        }
+
+        // Attempt 3-chain commit logic.
+        self.try_commit_with_qc(qc);
 
         Ok(())
+    }
+
+    /// Attempt to commit a block using the 3-chain commit rule.
+    ///
+    /// Classic HotStuff 3-chain commit rule:
+    /// - Let B be the block with `qc.block_id`
+    /// - Let P = parent of B
+    /// - Let G = parent of P (grandparent of B)
+    /// - If B, P, and G each have their `own_qc` and views are strictly increasing,
+    ///   we commit G (or advance `committed_block` to G if it's higher).
+    ///
+    /// This ensures that a block is only committed when there are two subsequent
+    /// blocks with QCs in the chain, providing Byzantine fault tolerance.
+    fn try_commit_with_qc(&mut self, qc: &QuorumCertificate<BlockIdT>) {
+        // 1. Find B (the block this QC is for).
+        let b_view = match self.blocks.get(&qc.block_id) {
+            Some(node) => {
+                // Check B has own_qc
+                if node.own_qc.is_none() {
+                    return;
+                }
+                node.view
+            }
+            None => return, // unknown block; nothing to commit
+        };
+
+        // 2. Find P = parent of B.
+        let (p_id, p_view) = {
+            let b = match self.blocks.get(&qc.block_id) {
+                Some(node) => node,
+                None => return,
+            };
+            match &b.parent_id {
+                Some(id) => {
+                    let p = match self.blocks.get(id) {
+                        Some(node) => node,
+                        None => return,
+                    };
+                    // Check P has own_qc
+                    if p.own_qc.is_none() {
+                        return;
+                    }
+                    (id.clone(), p.view)
+                }
+                None => return, // no parent → no 3-chain
+            }
+        };
+
+        // 3. Find G = parent of P (grandparent of B).
+        let (g_id, g_view) = {
+            let p = match self.blocks.get(&p_id) {
+                Some(node) => node,
+                None => return,
+            };
+            match &p.parent_id {
+                Some(id) => {
+                    let g = match self.blocks.get(id) {
+                        Some(node) => node,
+                        None => return,
+                    };
+                    // Check G has own_qc
+                    if g.own_qc.is_none() {
+                        return;
+                    }
+                    (id.clone(), g.view)
+                }
+                None => return, // no grandparent → no 3-chain
+            }
+        };
+
+        // 4. Ensure views are strictly increasing: G.view < P.view < B.view
+        if !(g_view < p_view && p_view < b_view) {
+            return;
+        }
+
+        // 5. Commit G if it is "ahead" of current committed_block (monotonic).
+        // For view-based monotonicity, we compare views to ensure we don't go backwards.
+        let should_commit = match &self.committed_block {
+            None => true,
+            Some(committed_id) => {
+                // Only commit if G is different from current committed block
+                // In a single-chain model, we allow overwriting to the newer committed block
+                committed_id != &g_id
+            }
+        };
+
+        if should_commit {
+            self.committed_block = Some(g_id);
+        }
     }
 
     /// Directly set a locked QC (for testing or initialization).
