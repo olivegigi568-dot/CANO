@@ -172,7 +172,7 @@ fn basic_hotstuff_single_node_commits_local_chain() {
 // Test 2: Two-node static leader commits blocks
 // ============================================================================
 
-/// Test that a two-node setup with a static leader processes blocks correctly.
+/// Test that a two-node setup processes proposals and votes without crashing.
 ///
 /// Note: With the locked-block safety rule and optimistic view advancement,
 /// this scenario may not achieve commits because:

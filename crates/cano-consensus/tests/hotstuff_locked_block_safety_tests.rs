@@ -15,10 +15,10 @@ use cano_wire::consensus::{BlockHeader, BlockProposal};
 // Helpers
 // ============================================================================
 
-/// Helper to build a simple validator set with `num` validators, each with `vp` voting power.
-/// Validator IDs are 0, 1, 2, ..., num-1.
-fn make_simple_set(num: u64, vp: u64) -> ConsensusValidatorSet {
-    let entries = (0..num)
+/// Helper to build a validator set with `num` validators, each with `vp` voting power.
+/// Validator IDs start from `start_id` and go to `start_id + num - 1`.
+fn make_validator_set_from(start_id: u64, num: u64, vp: u64) -> ConsensusValidatorSet {
+    let entries = (start_id..start_id + num)
         .map(|i| ValidatorSetEntry {
             id: ValidatorId(i),
             voting_power: vp,
@@ -27,16 +27,16 @@ fn make_simple_set(num: u64, vp: u64) -> ConsensusValidatorSet {
     ConsensusValidatorSet::new(entries).expect("valid set")
 }
 
+/// Helper to build a simple validator set with `num` validators, each with `vp` voting power.
+/// Validator IDs are 0, 1, 2, ..., num-1 (0-indexed for state engine tests).
+fn make_simple_set(num: u64, vp: u64) -> ConsensusValidatorSet {
+    make_validator_set_from(0, num, vp)
+}
+
 /// Helper to build a validator set with `num` validators, each with `vp` voting power.
 /// Validator IDs are 1, 2, 3, ..., num (1-indexed for engine tests).
 fn make_validator_set(num: u64, vp: u64) -> ConsensusValidatorSet {
-    let entries: Vec<ValidatorSetEntry> = (1..=num)
-        .map(|i| ValidatorSetEntry {
-            id: ValidatorId(i),
-            voting_power: vp,
-        })
-        .collect();
-    ConsensusValidatorSet::new(entries).expect("valid set")
+    make_validator_set_from(1, num, vp)
 }
 
 /// Helper to create a dummy block ID from a seed byte.

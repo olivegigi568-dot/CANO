@@ -505,7 +505,9 @@ where
         let mut current = match self.blocks.get(block_id) {
             Some(node) => node,
             None => {
-                // If the block is not yet registered, be strict and treat as unsafe.
+                // If the block is not yet registered, return false for safety
+                // since we cannot verify the ancestor chain without the block data.
+                // This ensures we never vote for a block whose ancestry we cannot verify.
                 return false;
             }
         };
