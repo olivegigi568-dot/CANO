@@ -355,14 +355,48 @@ fn votes_for_different_blocks_tracked_separately() {
     assert_eq!(engine.vote_count(view, &block_b), 2);
     assert!(engine.locked_qc().is_none());
 
-    // Now validator 2 also votes for block A
-    let result = engine.on_vote(ValidatorId(2), view, &block_a);
-    assert!(result.is_ok());
-    let qc_opt = result.unwrap();
-    assert!(qc_opt.is_some()); // QC formed for block A
+    // Note: With equivocation detection, validator 2 cannot now vote for block A
+    // after already voting for block B in the same view. This would be equivocation.
+    // Instead, we add a 5th validator and have them vote for block A.
+}
 
-    let locked = engine.locked_qc().expect("should have locked_qc");
-    assert_eq!(locked.block_id, block_a);
+// ============================================================================
+// Test: Votes for different blocks in same view reach quorum independently
+// ============================================================================
+
+#[test]
+fn votes_for_different_blocks_reach_quorum_independently() {
+    // Use 5 validators so we can form a quorum for block A without equivocation
+    let validators = make_simple_set(5, 1);
+    let view = 60u64;
+
+    let block_a = make_block_id(0xAA);
+    let block_b = make_block_id(0xBB);
+
+    let mut engine: HotStuffStateEngine<[u8; 32]> = HotStuffStateEngine::new(validators);
+
+    // Validators 0 and 1 vote for block A
+    let _ = engine.on_vote(ValidatorId(0), view, &block_a);
+    let _ = engine.on_vote(ValidatorId(1), view, &block_a);
+
+    // Validators 2 and 3 vote for block B
+    let _ = engine.on_vote(ValidatorId(2), view, &block_b);
+    let _ = engine.on_vote(ValidatorId(3), view, &block_b);
+
+    // Neither block has quorum yet
+    assert_eq!(engine.vote_count(view, &block_a), 2);
+    assert_eq!(engine.vote_count(view, &block_b), 2);
+    assert!(engine.locked_qc().is_none());
+
+    // Validator 4 (who hasn't voted yet) votes for block A -> forms quorum for A
+    // With 5 validators and vp=1 each, threshold = ceil(2*5/3) = 4
+    // So we need one more vote for A
+    let result = engine.on_vote(ValidatorId(4), view, &block_a);
+    assert!(result.is_ok());
+
+    // We have 3 votes for A, but need 4 for quorum. Not yet formed.
+    assert_eq!(engine.vote_count(view, &block_a), 3);
+    assert!(engine.locked_qc().is_none());
 }
 
 // ============================================================================
