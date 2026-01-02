@@ -39,6 +39,7 @@ pub mod network;
 pub mod qc;
 pub mod sim;
 pub mod validator_set;
+pub mod vote_accumulator;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HotStuffDriver, ToValidatorId, ValidatorContext};
@@ -48,6 +49,7 @@ pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork,
 pub use qc::{QcValidationError, QuorumCertificate};
 pub use sim::SingleNodeSim;
 pub use validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
+pub use vote_accumulator::VoteAccumulator;
 
 
 use cano_crypto::CryptoProvider;
