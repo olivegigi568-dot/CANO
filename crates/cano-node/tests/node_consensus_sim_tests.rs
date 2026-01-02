@@ -403,7 +403,7 @@ fn node_consensus_sim_processes_vote_event() {
 
     // Create HotStuffDriver with HotStuffState engine
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // Wrap into NodeConsensusSim
     let mut sim = NodeConsensusSim::new(node, driver);
@@ -524,7 +524,7 @@ fn node_consensus_sim_processes_block_proposal_event() {
 
     // Create HotStuffDriver with HotStuffState engine
     let engine = HotStuffState::new_at_height(1);
-    let driver = HotStuffDriver::new(engine);
+    let driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // Wrap into NodeConsensusSim
     let mut sim = NodeConsensusSim::new(node, driver);
