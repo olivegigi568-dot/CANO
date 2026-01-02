@@ -93,10 +93,10 @@ impl<BlockIdT: Clone> QuorumCertificate<BlockIdT> {
             }
 
             // Accumulate voting power
-            if let Some(idx) = validators.index_of(*id) {
-                let entry = validators.get(idx).expect("index_of should be valid");
-                acc_vp = acc_vp.saturating_add(entry.voting_power);
-            }
+            // Safe to unwrap: contains() already verified membership
+            let idx = validators.index_of(*id).expect("contains check passed");
+            let entry = validators.get(idx).expect("index_of should be valid");
+            acc_vp = acc_vp.saturating_add(entry.voting_power);
         }
 
         // Check quorum threshold
