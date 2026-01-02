@@ -14,6 +14,7 @@
 //! - [`HotStuffDriver`]: Thin wrapper around the HotStuff consensus state
 //! - [`ValidatorContext`]: Wrapper around validator set for membership and quorum checks
 
+use crate::hotstuff_state_engine::CommittedEntry;
 use crate::ids::ValidatorId;
 use crate::network::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
 use crate::qc::QuorumCertificate;
@@ -178,6 +179,9 @@ pub struct HotStuffDriver<E, BlockIdT = [u8; 32]> {
     qcs_formed: u64,
     /// Last QC formed, if any.
     last_qc: Option<QuorumCertificate<BlockIdT>>,
+    /// Index into the engine's commit_log indicating how many entries
+    /// have already been observed/consumed by this driver.
+    last_commit_idx: usize,
 }
 
 impl<E, BlockIdT> HotStuffDriver<E, BlockIdT>
@@ -198,6 +202,7 @@ where
             rejected_proposals: 0,
             qcs_formed: 0,
             last_qc: None,
+            last_commit_idx: 0,
         }
     }
 
@@ -215,6 +220,7 @@ where
             rejected_proposals: 0,
             qcs_formed: 0,
             last_qc: None,
+            last_commit_idx: 0,
         }
     }
 
@@ -279,6 +285,57 @@ where
             Some(ctx) => ctx.is_member(id),
             None => true, // No validator context means permissive mode
         }
+    }
+}
+
+// ============================================================================
+// Commit notification methods for HotStuffDriver
+// ============================================================================
+
+/// Trait for engines that expose an append-only commit log.
+///
+/// This trait abstracts access to the engine's commit log, allowing
+/// `HotStuffDriver` to provide commit notification APIs without knowing
+/// the specific engine implementation.
+pub trait HasCommitLog<BlockIdT> {
+    /// Returns a slice of all committed entries.
+    fn commit_log(&self) -> &[CommittedEntry<BlockIdT>];
+}
+
+impl<E, BlockIdT> HotStuffDriver<E, BlockIdT>
+where
+    BlockIdT: Clone,
+    E: HasCommitLog<BlockIdT>,
+{
+    /// Returns a slice view of all commits that have occurred since the last
+    /// time `drain_new_commits` was called.
+    ///
+    /// This method does not advance the internal index; call `drain_new_commits`
+    /// to consume the commits and advance the index.
+    pub fn new_commits(&self) -> &[CommittedEntry<BlockIdT>] {
+        let log = self.engine.commit_log();
+        if self.last_commit_idx > log.len() {
+            // Should not happen; be defensive.
+            &[]
+        } else {
+            &log[self.last_commit_idx..]
+        }
+    }
+
+    /// Returns a Vec of all new commits since the last drain and advances
+    /// the driver's internal index to the end of the commit log.
+    ///
+    /// This method provides "handle once then forget" semantics: each commit
+    /// is returned exactly once across multiple calls to this method.
+    pub fn drain_new_commits(&mut self) -> Vec<CommittedEntry<BlockIdT>> {
+        let log = self.engine.commit_log();
+        if self.last_commit_idx >= log.len() {
+            return Vec::new();
+        }
+        let slice = &log[self.last_commit_idx..];
+        let out = slice.to_vec();
+        self.last_commit_idx = log.len();
+        out
     }
 }
 
