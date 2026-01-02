@@ -477,4 +477,59 @@ where
     pub fn vote_count(&self, view: u64, block_id: &BlockIdT) -> usize {
         self.votes.vote_count(view, block_id)
     }
+
+    /// Returns true if it is safe to vote for the given block, i.e.,
+    /// either there is no locked QC yet, or the block is on a chain that
+    /// includes the locked block as an ancestor.
+    ///
+    /// This implements the locked-block safety rule from HotStuff:
+    /// once a block L is locked (via locked_qc), a node must never vote
+    /// for a proposal whose chain conflicts with L.
+    ///
+    /// # Arguments
+    ///
+    /// - `block_id`: The identifier of the block to check
+    ///
+    /// # Returns
+    ///
+    /// - `true` if it is safe to vote for this block
+    /// - `false` if voting for this block would violate the locked-block safety rule
+    pub fn is_safe_to_vote_on_block(&self, block_id: &BlockIdT) -> bool {
+        // 1. If no locked qc yet, allow.
+        let locked = match self.locked_qc.as_ref() {
+            None => return true,
+            Some(qc) => qc,
+        };
+
+        // 2. Find this block's node.
+        let mut current = match self.blocks.get(block_id) {
+            Some(node) => node,
+            None => {
+                // If the block is not yet registered, return false for safety
+                // since we cannot verify the ancestor chain without the block data.
+                // This ensures we never vote for a block whose ancestry we cannot verify.
+                return false;
+            }
+        };
+
+        // 3. Walk ancestors until genesis or until we find locked_qc.block_id.
+        let locked_block_id = &locked.block_id;
+        loop {
+            if &current.id == locked_block_id {
+                return true;
+            }
+            let parent_id = match &current.parent_id {
+                Some(pid) => pid,
+                None => break,
+            };
+            current = match self.blocks.get(parent_id) {
+                Some(node) => node,
+                None => break,
+            };
+        }
+
+        // If we walked the chain and didn't find the locked block, this block
+        // is on a conflicting fork; do not vote.
+        false
+    }
 }
