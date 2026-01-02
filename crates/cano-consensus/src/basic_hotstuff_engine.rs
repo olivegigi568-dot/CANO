@@ -97,11 +97,14 @@ where
     }
 
     /// Get the leader for a given view (round-robin).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the validator set is empty. This should never happen since
+    /// `ConsensusValidatorSet::new` enforces non-empty validator sets.
     pub fn leader_for_view(&self, view: u64) -> ValidatorId {
         let n = self.leaders.len() as u64;
-        if n == 0 {
-            return ValidatorId(0);
-        }
+        assert!(n > 0, "validator set must not be empty");
         let idx = (view % n) as usize;
         self.leaders[idx]
     }
@@ -268,11 +271,11 @@ impl BasicHotStuffEngine<[u8; 32]> {
     ) -> Option<ConsensusEngineAction<ValidatorId>> {
         let view = proposal.header.height;
 
-        // If proposal is for a future view, advance to it
+        // If proposal is for a future view, advance directly to it
         if view > self.current_view {
-            while self.current_view < view {
-                self.advance_view();
-            }
+            self.current_view = view;
+            self.proposed_in_view = false;
+            self.voted_in_view = false;
         }
 
         // Only process proposals for our current view
@@ -313,7 +316,13 @@ impl BasicHotStuffEngine<[u8; 32]> {
             .register_block(block_id, view, parent_id, justify_qc);
 
         // Create and ingest our own vote
-        let _result = self.state.on_vote(self.local_id, view, &block_id);
+        // Errors here would indicate a bug in our code (voting for a block we just registered)
+        let vote_result = self.state.on_vote(self.local_id, view, &block_id);
+        debug_assert!(
+            vote_result.is_ok(),
+            "self-vote should not fail: {:?}",
+            vote_result
+        );
 
         self.voted_in_view = true;
 

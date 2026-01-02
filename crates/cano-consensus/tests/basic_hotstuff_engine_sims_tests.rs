@@ -88,8 +88,11 @@ impl ConsensusEngineDriver<MockConsensusNetwork<ValidatorId>> for BasicHotStuffE
                     if !self.validators.is_member(from) {
                         return Ok(vec![ConsensusEngineAction::Noop]);
                     }
-                    // Ingest vote into engine
-                    let _ = self.engine.on_vote_event(from, &vote);
+                    // Ingest vote into engine - errors indicate invalid votes (non-member, etc.)
+                    // In production, we'd log these; in tests, we just ignore them
+                    if let Err(_e) = self.engine.on_vote_event(from, &vote) {
+                        // Vote from unknown validator or other validation error - ignore
+                    }
                 }
                 ConsensusNetworkEvent::IncomingProposal { from, proposal } => {
                     // Check validator membership
