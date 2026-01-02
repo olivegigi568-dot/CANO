@@ -320,7 +320,7 @@ impl NodeHotstuffHarness {
     /// Get the local address the node is listening on.
     ///
     /// Useful for tests that bind to port 0 and need the actual assigned port.
-    /// 
+    ///
     /// Note: This requires mutable access because the underlying `ConsensusNode`
     /// API uses mutable references for accessing `NetService`.
     pub fn local_addr(&mut self) -> io::Result<std::net::SocketAddr> {

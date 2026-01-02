@@ -81,7 +81,7 @@ impl NodeValidatorConfig {
     }
 }
 
-/// Deterministically constructsa `NetServiceConfig` and `PeerValidatorMap`
+/// Deterministically constructs a `NetServiceConfig` and `PeerValidatorMap`
 /// from a `NodeValidatorConfig`.
 ///
 /// This is a test-only helper function that:
