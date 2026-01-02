@@ -140,7 +140,7 @@ where
     }
 
     /// Get the commit log (sequence of committed blocks).
-    pub fn commit_log(&self) -> &[crate::hotstuff_state_engine::CommittedEntry<BlockIdT>] {
+    pub fn commit_log(&self) -> &[CommittedEntry<BlockIdT>] {
         self.state.commit_log()
     }
 

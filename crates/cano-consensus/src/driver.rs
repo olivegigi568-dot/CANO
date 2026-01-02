@@ -314,8 +314,15 @@ where
     /// to consume the commits and advance the index.
     pub fn new_commits(&self) -> &[CommittedEntry<BlockIdT>] {
         let log = self.engine.commit_log();
+        // Defensive check: last_commit_idx should never exceed log.len() since
+        // the log is append-only and we only advance the index to log.len().
+        debug_assert!(
+            self.last_commit_idx <= log.len(),
+            "Commit index {} out of bounds (log len {})",
+            self.last_commit_idx,
+            log.len()
+        );
         if self.last_commit_idx > log.len() {
-            // Should not happen; be defensive.
             &[]
         } else {
             &log[self.last_commit_idx..]
