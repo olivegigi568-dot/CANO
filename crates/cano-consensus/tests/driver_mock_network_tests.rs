@@ -66,7 +66,7 @@ fn driver_receives_vote_event_via_mock_network() {
 
     // 3. Construct a HotStuffDriver wrapping a HotStuffState
     let engine = HotStuffState::new_at_height(1);
-    let mut driver = HotStuffDriver::new(engine);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // 4. Poll the event and pass to driver
     let maybe_event = net.try_recv_one().unwrap();
@@ -100,7 +100,7 @@ fn driver_receives_proposal_event_via_mock_network() {
 
     // 3. Construct a HotStuffDriver wrapping a HotStuffState
     let engine = HotStuffState::new_at_height(1);
-    let mut driver = HotStuffDriver::new(engine);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // 4. Poll the event and pass to driver
     let maybe_event = net.try_recv_one().unwrap();
@@ -122,7 +122,7 @@ fn driver_receives_proposal_event_via_mock_network() {
 fn driver_handles_empty_network() {
     let mut net: MockConsensusNetwork<u64> = MockConsensusNetwork::new();
     let engine = HotStuffState::new_at_height(1);
-    let mut driver = HotStuffDriver::new(engine);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // Poll the empty network
     let maybe_event = net.try_recv_one().unwrap();
@@ -161,7 +161,7 @@ fn driver_processes_multiple_events_in_order() {
     });
 
     let engine = HotStuffState::new_at_height(1);
-    let mut driver = HotStuffDriver::new(engine);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // Process all events
     while let Ok(Some(event)) = net.try_recv_one() {
@@ -189,7 +189,7 @@ fn driver_follows_documented_usage_pattern() {
     });
 
     let engine = HotStuffState::new_at_height(1);
-    let mut driver = HotStuffDriver::new(engine);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::new(engine);
 
     // Simulate the documented usage pattern for 2 iterations
     for _ in 0..2 {

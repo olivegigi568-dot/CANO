@@ -714,9 +714,9 @@ fn multi_node_sim_ignores_votes_from_non_members() {
     let ctx2 = ValidatorContext::new(validator_set.clone());
     let ctx3 = ValidatorContext::new(validator_set.clone());
 
-    let driver1 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
-    let driver2 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
-    let driver3 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
+    let driver1: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
+    let driver2: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
+    let driver3: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
 
     // Create the simulation with honest nodes
     let nodes = vec![
@@ -792,9 +792,9 @@ fn multi_node_sim_accepts_votes_from_members() {
     let ctx2 = ValidatorContext::new(validator_set.clone());
     let ctx3 = ValidatorContext::new(validator_set.clone());
 
-    let driver1 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
-    let driver2 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
-    let driver3 = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
+    let driver1: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx1);
+    let driver2: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx2);
+    let driver3: HotStuffDriver<HotStuffState, [u8; 32]> = HotStuffDriver::with_validators(HotStuffState::new_at_height(1), ctx3);
 
     // Inject a vote from a valid member (node 1) into node 2's inbound queue
     let valid_vote = Vote {
