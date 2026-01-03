@@ -296,6 +296,7 @@ fn block_store_starts_empty() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -325,6 +326,7 @@ fn block_store_stores_proposals_on_broadcast() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -360,6 +362,7 @@ fn block_store_accumulates_proposals_over_multiple_steps() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -394,6 +397,7 @@ fn block_store_proposals_retrievable_by_id() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -431,6 +435,7 @@ fn block_store_mut_allows_clearing() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };

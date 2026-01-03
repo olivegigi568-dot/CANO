@@ -93,3 +93,14 @@ mod tests {
         assert_eq!(vid, cid);
     }
 }
+
+/// A validator's public key used for consensus verification.
+///
+/// This type is intentionally opaque:
+/// - No algorithm-specific semantics.
+/// - No size guarantees.
+/// - It's just "bytes representing a consensus public key" for now.
+///
+/// A future task will bind this to actual PQ signature algorithms.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ValidatorPublicKey(pub Vec<u8>);

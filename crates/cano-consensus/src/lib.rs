@@ -39,11 +39,13 @@ pub mod block_state;
 pub mod driver;
 pub mod hotstuff_state_engine;
 pub mod ids;
+pub mod key_registry;
 pub mod multi_sim;
 pub mod network;
 pub mod qc;
 pub mod sim;
 pub mod validator_set;
+pub mod verify;
 pub mod vote_accumulator;
 
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
@@ -51,12 +53,14 @@ pub use basic_hotstuff_engine::BasicHotStuffEngine;
 pub use block_state::BlockNode;
 pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, DrainableCommitLog, HasCommitLog, HotStuffDriver, ToValidatorId, ValidatorContext};
 pub use hotstuff_state_engine::{CommittedEntry, HotStuffStateEngine};
-pub use ids::{ConsensusNodeId, ValidatorId};
+pub use ids::{ConsensusNodeId, ValidatorId, ValidatorPublicKey};
+pub use key_registry::ValidatorKeyRegistry;
 pub use multi_sim::MultiNodeSim;
 pub use network::{ConsensusNetwork, ConsensusNetworkEvent, MockConsensusNetwork, NetworkError};
 pub use qc::{QcValidationError, QuorumCertificate};
 pub use sim::SingleNodeSim;
 pub use validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
+pub use verify::{ConsensusVerifier, NoopConsensusVerifier, VerificationError};
 pub use vote_accumulator::VoteAccumulator;
 
 

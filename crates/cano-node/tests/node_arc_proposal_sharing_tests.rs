@@ -308,6 +308,7 @@ fn make_single_node_config() -> NodeValidatorConfig {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     }

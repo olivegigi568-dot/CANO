@@ -308,6 +308,7 @@ fn make_single_node_config() -> NodeValidatorConfig {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     }
@@ -394,10 +395,12 @@ fn node_hotstuff_two_nodes_have_consistent_commits() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: ValidatorId::new(2),
             addr: bogus_addr,
+            consensus_pk: vec![],
         }],
     };
 
@@ -405,10 +408,12 @@ fn node_hotstuff_two_nodes_have_consistent_commits() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(2),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: ValidatorId::new(1),
             addr: bogus_addr,
+            consensus_pk: vec![],
         }],
     };
 
