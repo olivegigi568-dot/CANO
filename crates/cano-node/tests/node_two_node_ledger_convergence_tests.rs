@@ -446,6 +446,34 @@ fn two_nodes_converge_on_same_ledger_tip_height() {
     let mut h0 = InMemoryNodeLedgerHarness::new(node0, ledger0);
     let mut h1 = InMemoryNodeLedgerHarness::new(node1, ledger1);
 
+    // BOOTSTRAP PHASE: Ensure both nodes start from the same genesis block.
+    // 
+    // The issue with simultaneous stepping is that with TCP latency, messages might
+    // not arrive before the next step. This can cause the leader at view 1 (node 1)
+    // to propose BEFORE receiving view 0's proposal and QC, resulting in a different
+    // genesis block.
+    //
+    // To fix this, we bootstrap by:
+    // 1. Let node 0 (leader at view 0) propose first
+    // 2. Step node 1 multiple times to receive and vote
+    // 3. Step node 0 to receive node 1's vote and form QC
+    // 4. Now both nodes have the same locked_qc before proceeding
+
+    // Step 1: Node 0 proposes at view 0
+    h0.step_once().expect("h0 bootstrap step failed");
+    
+    // Step 2: Give TCP messages time to arrive and node 1 to process
+    // Step node 1 multiple times to ensure it receives and processes the proposal
+    for _ in 0..50 {
+        h1.step_once().expect("h1 bootstrap step failed");
+        h0.step_once().expect("h0 bootstrap step failed");
+        
+        // Break early if both have commits
+        if h0.ledger().tip_height().is_some() && h1.ledger().tip_height().is_some() {
+            break;
+        }
+    }
+
     // 5. Drive both harnesses for a bounded number of steps.
     // With two nodes, HotStuff requires 3 consecutive blocks to commit (3-chain rule).
     // Each view produces one block, so we need at least ~10 views for reliable commits.
@@ -600,6 +628,14 @@ fn two_nodes_ledgers_match_block_ids_by_height() {
 
     let mut h0 = InMemoryNodeLedgerHarness::new(node0, ledger0);
     let mut h1 = InMemoryNodeLedgerHarness::new(node1, ledger1);
+
+    // BOOTSTRAP PHASE: Ensure both nodes start from the same genesis block.
+    // Let node 0 (leader at view 0) propose first, then sync both nodes.
+    h0.step_once().expect("h0 bootstrap step failed");
+    for _ in 0..20 {
+        h1.step_once().expect("h1 bootstrap step failed");
+        h0.step_once().expect("h0 bootstrap step failed");
+    }
 
     // 4. Drive both harnesses.
     // T72 requirement: Drive until BOTH nodes have at least some commits,

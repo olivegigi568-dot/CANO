@@ -224,13 +224,15 @@ impl BasicHotStuffEngine<[u8; 32]> {
         let view = self.current_view;
 
         // Parent is the locked block or committed block or none
+        // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
+        // can be a valid block_id (for the first proposal with proposer=0, view=0).
         let parent_id = self
             .state
             .locked_qc()
             .map(|qc| qc.block_id)
             .or_else(|| self.state.committed_block().cloned());
 
-        let parent_block_id = parent_id.unwrap_or([0u8; 32]);
+        let parent_block_id = parent_id.unwrap_or([0xFF; 32]);
 
         // Build a proposal - use consistent block_id derivation
         let block_id = self.make_block_id(&parent_block_id);
@@ -352,7 +354,9 @@ impl BasicHotStuffEngine<[u8; 32]> {
         });
 
         // Register the block in our state
-        let parent_id = if proposal.header.parent_block_id == [0u8; 32] {
+        // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
+        // can be a valid block_id (for the first proposal with proposer=0, view=0).
+        let parent_id = if proposal.header.parent_block_id == [0xFF; 32] {
             None
         } else {
             Some(proposal.header.parent_block_id)
