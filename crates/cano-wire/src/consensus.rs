@@ -115,6 +115,8 @@ impl Vote {
     /// (hence "v1" in the domain tag). Any future layout changes should use a
     /// new domain tag (e.g., "CANO:VOTE:v2").
     pub fn signing_preimage(&self) -> Vec<u8> {
+        // Capacity hint: domain_tag(12) + version(1) + chain_id(4) + height(8) + round(8) +
+        //               step(1) + block_id(32) + validator_index(2) + reserved(2) = 70 bytes
         let mut out = Vec::with_capacity(
             VOTE_DOMAIN_TAG.len() + 1 + 4 + 8 + 8 + 1 + 32 + 2 + 2
         );
@@ -307,7 +309,8 @@ impl WireEncode for BlockProposal {
             put_bytes(out, tx);
         }
 
-        // Append signature (length-prefixed with u16)
+        // Append signature (length-prefixed with u16, consistent with Vote.signature)
+        // u16 is sufficient for PQ signatures like ML-DSA (~3KB) up to 64KB max.
         let sig_len = len_to_u16(self.signature.len());
         put_u16(out, sig_len);
         put_bytes(out, &self.signature);
