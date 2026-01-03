@@ -27,7 +27,40 @@ use crate::net_service::{NetService, NetServiceError};
 use crate::peer::PeerId;
 use crate::peer_manager::PeerManager;
 
+use cano_consensus::hotstuff_state_engine::CommittedEntry;
 use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError, ValidatorId};
+
+// ============================================================================
+// NodeCommitInfo
+// ============================================================================
+
+/// Minimal node-level view of a committed consensus block.
+///
+/// This struct provides a thin wrapper around the consensus `CommittedEntry`,
+/// exposing commit information to callers at the node level.
+///
+/// # Type Parameter
+///
+/// - `BlockIdT`: The type used to identify blocks. The canonical type is `[u8; 32]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeCommitInfo<BlockIdT> {
+    /// The block identifier that was committed.
+    pub block_id: BlockIdT,
+    /// The view at which the block was proposed.
+    pub view: u64,
+    /// The height of the block in the chain from genesis.
+    pub height: u64,
+}
+
+impl<BlockIdT: Clone> From<CommittedEntry<BlockIdT>> for NodeCommitInfo<BlockIdT> {
+    fn from(entry: CommittedEntry<BlockIdT>) -> Self {
+        NodeCommitInfo {
+            block_id: entry.block_id,
+            view: entry.view,
+            height: entry.height,
+        }
+    }
+}
 
 // ============================================================================
 // ConsensusNodeError

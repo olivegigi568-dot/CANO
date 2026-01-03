@@ -25,7 +25,7 @@
 //! ```
 
 use crate::consensus_net::ConsensusNetAdapter;
-use crate::consensus_node::{ConsensusNode, ConsensusNodeError};
+use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo};
 use crate::consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
 use crate::net_service::{NetService, NetServiceConfig, NetServiceError};
 use crate::validator_config::NodeValidatorConfig;
@@ -358,5 +358,19 @@ impl NodeHotstuffHarness {
     /// Mutably access the underlying driver.
     pub fn driver_mut(&mut self) -> &mut HotStuffDriver<BasicHotStuffEngine<[u8; 32]>, [u8; 32]> {
         &mut self.sim.driver
+    }
+
+    /// Drain all new committed blocks known to this node's HotStuff driver.
+    ///
+    /// This method returns all commits that have occurred since the last call
+    /// to `drain_commits()`, and marks them as consumed. Subsequent calls will
+    /// only return commits that occurred after the previous call.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `NodeCommitInfo` representing all new commits. Returns an
+    /// empty vector if no new commits have occurred.
+    pub fn drain_commits(&mut self) -> Vec<NodeCommitInfo<[u8; 32]>> {
+        self.sim.drain_commits()
     }
 }

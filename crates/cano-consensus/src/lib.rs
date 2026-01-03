@@ -49,7 +49,7 @@ pub mod vote_accumulator;
 pub use adversarial_multi_sim::{AdversarialMultiNodeSim, InFlightMessage, PartitionConfig};
 pub use basic_hotstuff_engine::BasicHotStuffEngine;
 pub use block_state::BlockNode;
-pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, HasCommitLog, HotStuffDriver, ToValidatorId, ValidatorContext};
+pub use driver::{ConsensusEngineAction, ConsensusEngineDriver, DrainableCommitLog, HasCommitLog, HotStuffDriver, ToValidatorId, ValidatorContext};
 pub use hotstuff_state_engine::{CommittedEntry, HotStuffStateEngine};
 pub use ids::{ConsensusNodeId, ValidatorId};
 pub use multi_sim::MultiNodeSim;
