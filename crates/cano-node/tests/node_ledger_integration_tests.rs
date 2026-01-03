@@ -442,6 +442,7 @@ fn node_ledger_harness_and_block_store_are_consistent() {
         let stored = store
             .get(&committed.block_id)
             .expect("block_store missing proposal for ledger block");
-        assert_eq!(*stored, committed.proposal);
+        // Compare the dereferenced Arc values (both are Arc<BlockProposal>)
+        assert_eq!(*stored.proposal, *committed.proposal);
     }
 }

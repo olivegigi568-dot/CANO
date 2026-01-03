@@ -11,6 +11,12 @@
 //! proposal header fields. This ensures consistency with the consensus layer's
 //! block ID derivation.
 //!
+//! ## Arc<BlockProposal> Sharing
+//!
+//! Block proposals are stored as `Arc<BlockProposal>` (aliased as `SharedProposal`)
+//! to allow zero-copy sharing with other components like the ledger and commit index.
+//! This avoids expensive clones of potentially large proposal payloads.
+//!
 //! ## Limitations (Current Implementation)
 //!
 //! - **In-memory only**: No disk persistence; all data is lost on restart
@@ -37,9 +43,20 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use cano_consensus::ids::ValidatorId;
 use cano_wire::consensus::BlockProposal;
+
+// ============================================================================
+// SharedProposal type alias
+// ============================================================================
+
+/// A shared reference to a `BlockProposal`.
+///
+/// Using `Arc<BlockProposal>` allows zero-copy sharing of proposals between
+/// the block store, commit index, and ledger components.
+pub type SharedProposal = Arc<BlockProposal>;
 
 // ============================================================================
 // BlockStoreError
@@ -83,6 +100,19 @@ impl fmt::Display for BlockStoreError {
 impl std::error::Error for BlockStoreError {}
 
 // ============================================================================
+// StoredBlock
+// ============================================================================
+
+/// A stored block entry containing the block_id and shared proposal.
+#[derive(Debug, Clone)]
+pub struct StoredBlock {
+    /// The block identifier computed from the proposal header.
+    pub block_id: [u8; 32],
+    /// The shared reference to the block proposal.
+    pub proposal: SharedProposal,
+}
+
+// ============================================================================
 // BlockStore
 // ============================================================================
 
@@ -90,7 +120,7 @@ impl std::error::Error for BlockStoreError {}
 ///
 /// This struct provides a simple key-value store where:
 /// - Keys are `[u8; 32]` block IDs (computed from proposal headers)
-/// - Values are `BlockProposal` objects
+/// - Values are `SharedProposal` (Arc<BlockProposal>) objects
 ///
 /// The block ID is computed deterministically from the proposal header fields
 /// using `derive_block_id_from_header()`, which ensures that:
@@ -98,8 +128,8 @@ impl std::error::Error for BlockStoreError {}
 /// - Block IDs are unique per (proposer, view, parent_block_id) tuple
 #[derive(Debug, Clone)]
 pub struct BlockStore {
-    /// Internal storage mapping block_id -> BlockProposal
-    proposals: HashMap<[u8; 32], BlockProposal>,
+    /// Internal storage mapping block_id -> StoredBlock
+    inner: HashMap<[u8; 32], StoredBlock>,
 }
 
 impl Default for BlockStore {
@@ -112,7 +142,7 @@ impl BlockStore {
     /// Create a new, empty `BlockStore`.
     pub fn new() -> Self {
         BlockStore {
-            proposals: HashMap::new(),
+            inner: HashMap::new(),
         }
     }
 
@@ -182,7 +212,14 @@ impl BlockStore {
     /// The computed block ID for the stored proposal.
     pub fn store_proposal(&mut self, proposal: &BlockProposal) -> [u8; 32] {
         let block_id = Self::compute_block_id(proposal);
-        self.proposals.insert(block_id, proposal.clone());
+        let shared = Arc::new(proposal.clone());
+        self.inner.insert(
+            block_id,
+            StoredBlock {
+                block_id,
+                proposal: shared,
+            },
+        );
         block_id
     }
 
@@ -197,7 +234,14 @@ impl BlockStore {
     /// - `block_id`: The pre-computed block ID
     /// - `proposal`: The block proposal to store
     pub fn store_proposal_with_id(&mut self, block_id: [u8; 32], proposal: &BlockProposal) {
-        self.proposals.insert(block_id, proposal.clone());
+        let shared = Arc::new(proposal.clone());
+        self.inner.insert(
+            block_id,
+            StoredBlock {
+                block_id,
+                proposal: shared,
+            },
+        );
     }
 
     /// Idempotent insert of a proposal into the block store.
@@ -223,11 +267,12 @@ impl BlockStore {
     /// different proposal.
     pub fn insert(&mut self, proposal: BlockProposal) -> Result<[u8; 32], BlockStoreError> {
         let block_id = Self::compute_block_id(&proposal);
+        let shared = Arc::new(proposal);
 
-        if let Some(existing) = self.proposals.get(&block_id) {
+        if let Some(existing) = self.inner.get(&block_id) {
             // If the same block_id with an identical proposal is inserted again,
             // treat this as idempotent and return Ok without error.
-            if *existing == proposal {
+            if *existing.proposal == *shared {
                 return Ok(block_id);
             }
 
@@ -235,18 +280,24 @@ impl BlockStore {
             // consistency error.
             return Err(BlockStoreError::ConflictingProposal {
                 block_id,
-                existing_proposer: existing.header.proposer_index,
-                new_proposer: proposal.header.proposer_index,
+                existing_proposer: existing.proposal.header.proposer_index,
+                new_proposer: shared.header.proposer_index,
             });
         }
 
         // Otherwise, insert normally.
-        self.proposals.insert(block_id, proposal);
+        self.inner.insert(
+            block_id,
+            StoredBlock {
+                block_id,
+                proposal: shared,
+            },
+        );
 
         Ok(block_id)
     }
 
-    /// Retrieve a proposal by its block ID.
+    /// Retrieve a stored block entry by its block ID.
     ///
     /// # Arguments
     ///
@@ -254,9 +305,9 @@ impl BlockStore {
     ///
     /// # Returns
     ///
-    /// A reference to the stored `BlockProposal`, or `None` if not found.
-    pub fn get(&self, block_id: &[u8; 32]) -> Option<&BlockProposal> {
-        self.proposals.get(block_id)
+    /// A reference to the stored `StoredBlock`, or `None` if not found.
+    pub fn get(&self, block_id: &[u8; 32]) -> Option<&StoredBlock> {
+        self.inner.get(block_id)
     }
 
     /// Check if a proposal with the given block ID exists in the store.
@@ -269,7 +320,7 @@ impl BlockStore {
     ///
     /// `true` if a proposal with this ID exists, `false` otherwise.
     pub fn contains(&self, block_id: &[u8; 32]) -> bool {
-        self.proposals.contains_key(block_id)
+        self.inner.contains_key(block_id)
     }
 
     /// Get the number of proposals stored.
@@ -278,7 +329,7 @@ impl BlockStore {
     ///
     /// The count of stored proposals.
     pub fn len(&self) -> usize {
-        self.proposals.len()
+        self.inner.len()
     }
 
     /// Check if the store is empty.
@@ -287,23 +338,23 @@ impl BlockStore {
     ///
     /// `true` if no proposals are stored, `false` otherwise.
     pub fn is_empty(&self) -> bool {
-        self.proposals.is_empty()
+        self.inner.is_empty()
     }
 
-    /// Get an iterator over all stored (block_id, proposal) pairs.
+    /// Get an iterator over all stored (block_id, stored_block) pairs.
     ///
     /// # Returns
     ///
     /// An iterator over references to stored entries.
-    pub fn iter(&self) -> impl Iterator<Item = (&[u8; 32], &BlockProposal)> {
-        self.proposals.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8; 32], &StoredBlock)> {
+        self.inner.iter()
     }
 
     /// Clear all stored proposals.
     ///
     /// This removes all proposals from the store, freeing memory.
     pub fn clear(&mut self) {
-        self.proposals.clear();
+        self.inner.clear();
     }
 }
 
@@ -355,9 +406,9 @@ mod tests {
 
         let retrieved = store.get(&block_id);
         assert!(retrieved.is_some());
-        let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.header.height, proposal.header.height);
-        assert_eq!(retrieved.header.proposer_index, proposal.header.proposer_index);
+        let stored = retrieved.unwrap();
+        assert_eq!(stored.proposal.header.height, proposal.header.height);
+        assert_eq!(stored.proposal.header.proposer_index, proposal.header.proposer_index);
     }
 
     #[test]
@@ -464,8 +515,8 @@ mod tests {
         assert_eq!(store.len(), 1);
 
         // Should return the newer proposal
-        let retrieved = store.get(&block_id).unwrap();
-        assert_eq!(retrieved.txs.len(), 1);
+        let stored = store.get(&block_id).unwrap();
+        assert_eq!(stored.proposal.txs.len(), 1);
     }
 
     #[test]
