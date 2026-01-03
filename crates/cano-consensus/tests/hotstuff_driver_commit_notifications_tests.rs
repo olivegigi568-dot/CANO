@@ -135,7 +135,7 @@ impl ConsensusEngineDriver<MockConsensusNetwork<ValidatorId>>
         }
 
         // Try to generate a proposal if we're the leader
-        if let Some(action) = self.engine_mut().try_propose() {
+        for action in self.engine_mut().try_propose() {
             actions.push(action);
         }
 
@@ -423,7 +423,7 @@ fn driver_commit_notifications_direct_usage() {
     // For a single-node setup, we need to call try_propose() repeatedly
     // and let the engine self-vote and form QCs
     for _ in 0..10 {
-        if let Some(_action) = driver.engine_mut().try_propose() {
+        if !driver.engine_mut().try_propose().is_empty() {
             // Proposal generated - engine self-votes and may form QC
         }
     }

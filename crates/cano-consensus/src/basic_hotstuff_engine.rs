@@ -200,27 +200,41 @@ impl BasicHotStuffEngine<[u8; 32]> {
 
     /// Called when this node is leader for the current view.
     ///
-    /// Returns a `BroadcastProposal` action if a proposal should be generated,
-    /// or `None` if we are not the leader or have already proposed.
-    pub fn on_leader_step(&mut self) -> Option<ConsensusEngineAction<ValidatorId>> {
+    /// Returns a list of actions to be performed:
+    /// - `BroadcastProposal` for the new block proposal
+    /// - `BroadcastVote` for the leader's own vote on the proposal
+    ///
+    /// Returns an empty Vec if we are not the leader or have already proposed.
+    ///
+    /// # Two-Node Liveness
+    ///
+    /// In a 2-node setup with 2/3 quorum requirement, both nodes must vote and
+    /// both votes must be seen by someone to form a QC. The leader broadcasts
+    /// both its proposal AND its vote so that the follower can collect both
+    /// votes and form a QC.
+    pub fn on_leader_step(&mut self) -> Vec<ConsensusEngineAction<ValidatorId>> {
         if !self.is_leader_for_current_view() {
-            return None;
+            return Vec::new();
         }
 
         if self.proposed_in_view {
-            return None;
+            return Vec::new();
         }
 
         let view = self.current_view;
 
-        // Parent is the locked block or committed block or none
+        // Parent is the locked block or committed block or none.
+        // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
+        // can be a valid block_id. Specifically, the first proposal with proposer=0,
+        // view=0, and parent=[0u8;32] produces block_id=[0u8;32], making it unsuitable
+        // as a sentinel value.
         let parent_id = self
             .state
             .locked_qc()
             .map(|qc| qc.block_id)
             .or_else(|| self.state.committed_block().cloned());
 
-        let parent_block_id = parent_id.unwrap_or([0u8; 32]);
+        let parent_block_id = parent_id.unwrap_or([0xFF; 32]);
 
         // Build a proposal - use consistent block_id derivation
         let block_id = self.make_block_id(&parent_block_id);
@@ -232,7 +246,7 @@ impl BasicHotStuffEngine<[u8; 32]> {
             .register_block(block_id, view, parent_id, justify_qc.clone());
 
         // Build the wire-format proposal
-        use cano_wire::consensus::{BlockHeader, BlockProposal};
+        use cano_wire::consensus::{BlockHeader, BlockProposal, Vote};
 
         let proposal = BlockProposal {
             header: BlockHeader {
@@ -270,12 +284,29 @@ impl BasicHotStuffEngine<[u8; 32]> {
         let result = self.state.on_vote(self.local_id, view, &block_id);
         self.voted_in_view = true;
 
+        // Build the leader's vote to broadcast
+        let vote = Vote {
+            version: 1,
+            chain_id: 1,
+            height: view,
+            round: view,
+            step: 0,
+            block_id,
+            validator_index: self.local_id.0 as u16,
+            reserved: 0,
+            signature: vec![],
+        };
+
         // If a QC was formed immediately (e.g., single node), advance view
         if let Ok(Some(_qc)) = result {
             self.advance_view();
         }
 
-        Some(ConsensusEngineAction::BroadcastProposal(proposal))
+        // Return both actions: broadcast proposal and broadcast leader's vote
+        vec![
+            ConsensusEngineAction::BroadcastProposal(proposal),
+            ConsensusEngineAction::BroadcastVote(vote),
+        ]
     }
 
     /// Called when we receive a proposal from the network.
@@ -324,8 +355,12 @@ impl BasicHotStuffEngine<[u8; 32]> {
             QuorumCertificate::new(wire_qc.block_id, wire_qc.height, vec![])
         });
 
-        // Register the block in our state
-        let parent_id = if proposal.header.parent_block_id == [0u8; 32] {
+        // Register the block in our state.
+        // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
+        // can be a valid block_id. Specifically, the first proposal with proposer=0,
+        // view=0, and parent=[0u8;32] produces block_id=[0u8;32], making it unsuitable
+        // as a sentinel value.
+        let parent_id = if proposal.header.parent_block_id == [0xFF; 32] {
             None
         } else {
             Some(proposal.header.parent_block_id)
@@ -366,9 +401,10 @@ impl BasicHotStuffEngine<[u8; 32]> {
             signature: vec![],
         };
 
-        // After voting, advance to the next view (optimistic view advancement)
-        // This allows the protocol to progress even before seeing the QC
-        self.advance_view();
+        // NOTE: We do NOT advance view here. View advancement happens only when
+        // a QC is formed (either locally via on_vote_event, or when the leader
+        // processes our vote and forms the QC). This ensures all nodes stay
+        // synchronized on the same view until consensus is reached.
 
         Some(ConsensusEngineAction::BroadcastVote(vote))
     }
@@ -406,7 +442,7 @@ impl BasicHotStuffEngine<[u8; 32]> {
     ///
     /// The event parameter is the event from the network, if any.
     /// The driver should call `on_proposal_event` or `on_vote_event` before calling this.
-    pub fn try_propose(&mut self) -> Option<ConsensusEngineAction<ValidatorId>> {
+    pub fn try_propose(&mut self) -> Vec<ConsensusEngineAction<ValidatorId>> {
         self.on_leader_step()
     }
 }
@@ -478,23 +514,28 @@ mod tests {
             BasicHotStuffEngine::new(ValidatorId(1), validators);
 
         // Single node is always leader
-        let action = engine.on_leader_step();
-        assert!(action.is_some());
+        let actions = engine.on_leader_step();
+        assert!(!actions.is_empty());
 
-        if let Some(ConsensusEngineAction::BroadcastProposal(proposal)) = action {
+        // First action should be BroadcastProposal
+        if let ConsensusEngineAction::BroadcastProposal(proposal) = &actions[0] {
             assert_eq!(proposal.header.height, 0);
             assert_eq!(proposal.header.proposer_index, 1);
         } else {
             panic!("Expected BroadcastProposal action");
         }
 
+        // Second action should be BroadcastVote (leader's own vote)
+        assert!(actions.len() >= 2);
+        assert!(matches!(&actions[1], ConsensusEngineAction::BroadcastVote(_)));
+
         // With a single node, QC forms immediately, view advances to 1
         // So the second call produces another proposal (for view 1)
         // This is correct behavior with optimistic view advancement
-        let action2 = engine.on_leader_step();
-        assert!(action2.is_some());
+        let actions2 = engine.on_leader_step();
+        assert!(!actions2.is_empty());
 
-        if let Some(ConsensusEngineAction::BroadcastProposal(proposal2)) = action2 {
+        if let ConsensusEngineAction::BroadcastProposal(proposal2) = &actions2[0] {
             assert_eq!(proposal2.header.height, 1);
         } else {
             panic!("Expected BroadcastProposal action for view 1");
@@ -508,7 +549,7 @@ mod tests {
         let mut engine: BasicHotStuffEngine<[u8; 32]> =
             BasicHotStuffEngine::new(ValidatorId(2), validators);
 
-        let action = engine.on_leader_step();
-        assert!(action.is_none());
+        let actions = engine.on_leader_step();
+        assert!(actions.is_empty());
     }
 }

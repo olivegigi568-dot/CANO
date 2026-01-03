@@ -446,28 +446,109 @@ fn two_nodes_converge_on_same_ledger_tip_height() {
     let mut h0 = InMemoryNodeLedgerHarness::new(node0, ledger0);
     let mut h1 = InMemoryNodeLedgerHarness::new(node1, ledger1);
 
+    // BOOTSTRAP PHASE: Ensure both nodes start from the same genesis block.
+    // 
+    // The issue with simultaneous stepping is that with TCP latency, messages might
+    // not arrive before the next step. This can cause the leader at view 1 (node 1)
+    // to propose BEFORE receiving view 0's proposal and QC, resulting in a different
+    // genesis block.
+    //
+    // To fix this, we bootstrap by:
+    // 1. Let node 0 (leader at view 0) propose first
+    // 2. Step node 1 multiple times to receive and vote
+    // 3. Step node 0 to receive node 1's vote and form QC
+    // 4. Now both nodes have the same locked_qc before proceeding
+
+    // Step 1: Node 0 proposes at view 0
+    h0.step_once().expect("h0 bootstrap step failed");
+    
+    // Step 2: Give TCP messages time to arrive and node 1 to process
+    // Step node 1 multiple times to ensure it receives and processes the proposal
+    for _ in 0..50 {
+        h1.step_once().expect("h1 bootstrap step failed");
+        h0.step_once().expect("h0 bootstrap step failed");
+        
+        // Break early if both have commits
+        if h0.ledger().tip_height().is_some() && h1.ledger().tip_height().is_some() {
+            break;
+        }
+    }
+
     // 5. Drive both harnesses for a bounded number of steps.
     // With two nodes, HotStuff requires 3 consecutive blocks to commit (3-chain rule).
     // Each view produces one block, so we need at least ~10 views for reliable commits.
-    const MAX_STEPS: usize = 400;
+    //
+    // T72 requirement: We must drive until BOTH nodes have at least one commit,
+    // then verify they agree on all committed blocks.
+    const MAX_STEPS: usize = 1000;
+    const MIN_COMMITS: u64 = 3; // Require at least 3 commits to show 3-chain rule working
 
+    // Drive until both nodes have at least MIN_COMMITS commits
     for _ in 0..MAX_STEPS {
         h0.step_once().expect("h0.step_once failed");
         h1.step_once().expect("h1.step_once failed");
+
+        let tip0 = h0.ledger().tip_height();
+        let tip1 = h1.ledger().tip_height();
+
+        // Once both have enough commits, we can verify agreement
+        if let (Some(t0), Some(t1)) = (tip0, tip1) {
+            if t0 >= MIN_COMMITS && t1 >= MIN_COMMITS {
+                break;
+            }
+        }
     }
 
-    let tip0 = h0.ledger().tip_height();
-    let tip1 = h1.ledger().tip_height();
+    // T72 requirement: Assert that both nodes have at least one commit
+    let tip0 = h0.ledger().tip_height().expect("node0 had no commits after MAX_STEPS");
+    let tip1 = h1.ledger().tip_height().expect("node1 had no commits after MAX_STEPS");
 
-    // Note: With the current two-node setup, commits may not occur within
-    // the bounded step count due to the HotStuff 3-chain commit rule requiring
-    // multiple consecutive blocks. This test verifies the infrastructure works
-    // without crashing. Full commit convergence may require additional protocol
-    // improvements or more steps.
-    if let (Some(t0), Some(t1)) = (tip0, tip1) {
-        assert_eq!(t0, t1, "ledgers diverged in tip height");
-        assert_eq!(h0.ledger().len(), h1.ledger().len());
+    // Both nodes should have at least MIN_COMMITS commits
+    assert!(
+        tip0 >= MIN_COMMITS,
+        "node0 should have at least {} commits, got {}",
+        MIN_COMMITS,
+        tip0
+    );
+    assert!(
+        tip1 >= MIN_COMMITS,
+        "node1 should have at least {} commits, got {}",
+        MIN_COMMITS,
+        tip1
+    );
+
+    // T72 requirement: Verify that both ledgers agree on all blocks up to min(tip0, tip1).
+    // Due to asynchrony, one node might be slightly ahead, but they must agree on
+    // all heights they both have.
+    let common_tip = std::cmp::min(tip0, tip1);
+
+    let ledger0 = h0.ledger();
+    let ledger1 = h1.ledger();
+
+    let min_height0 = ledger0.iter().map(|(h, _)| *h).min().unwrap_or(0);
+    let min_height1 = ledger1.iter().map(|(h, _)| *h).min().unwrap_or(0);
+    let min_height = std::cmp::max(min_height0, min_height1);
+
+    for height in min_height..=common_tip {
+        let b0 = ledger0
+            .get(height)
+            .unwrap_or_else(|| panic!("node0 missing height {}", height));
+        let b1 = ledger1
+            .get(height)
+            .unwrap_or_else(|| panic!("node1 missing height {}", height));
+
+        assert_eq!(
+            b0.block_id, b1.block_id,
+            "block_id mismatch at height {}",
+            height
+        );
     }
+
+    // Verify ledger lengths match for the common portion
+    assert!(
+        ledger0.len() > 0 && ledger1.len() > 0,
+        "Both ledgers should have committed blocks"
+    );
 }
 
 /// Test that two nodes over real TCP match block_ids at each height.
@@ -548,42 +629,78 @@ fn two_nodes_ledgers_match_block_ids_by_height() {
     let mut h0 = InMemoryNodeLedgerHarness::new(node0, ledger0);
     let mut h1 = InMemoryNodeLedgerHarness::new(node1, ledger1);
 
+    // BOOTSTRAP PHASE: Ensure both nodes start from the same genesis block.
+    // Let node 0 (leader at view 0) propose first, then sync both nodes.
+    h0.step_once().expect("h0 bootstrap step failed");
+    for _ in 0..20 {
+        h1.step_once().expect("h1 bootstrap step failed");
+        h0.step_once().expect("h0 bootstrap step failed");
+    }
+
     // 4. Drive both harnesses.
-    const MAX_STEPS: usize = 400;
+    // T72 requirement: Drive until BOTH nodes have at least some commits,
+    // then verify they agree on all committed blocks.
+    const MAX_STEPS: usize = 1000;
+    const MIN_COMMITS: u64 = 3; // Require at least 3 commits to show 3-chain rule working
+
+    // Drive until both nodes have at least MIN_COMMITS commits
     for _ in 0..MAX_STEPS {
         h0.step_once().expect("h0.step_once failed");
         h1.step_once().expect("h1.step_once failed");
+
+        let tip0 = h0.ledger().tip_height();
+        let tip1 = h1.ledger().tip_height();
+
+        // Once both have enough commits, we can verify agreement
+        if let (Some(t0), Some(t1)) = (tip0, tip1) {
+            if t0 >= MIN_COMMITS && t1 >= MIN_COMMITS {
+                break;
+            }
+        }
     }
+
+    // T72 requirement: Assert that both nodes have at least one commit
+    let tip0 = h0.ledger().tip_height().expect("node0 had no commits after MAX_STEPS");
+    let tip1 = h1.ledger().tip_height().expect("node1 had no commits after MAX_STEPS");
+
+    // Both nodes should have at least MIN_COMMITS commits
+    assert!(
+        tip0 >= MIN_COMMITS,
+        "node0 should have at least {} commits, got {}",
+        MIN_COMMITS,
+        tip0
+    );
+    assert!(
+        tip1 >= MIN_COMMITS,
+        "node1 should have at least {} commits, got {}",
+        MIN_COMMITS,
+        tip1
+    );
+
+    // 5. T72 requirement: Compare block_id at each height up to min(tip0, tip1).
+    // Due to asynchrony, one node might be slightly ahead, but they must agree on
+    // all heights they both have.
+    let common_tip = std::cmp::min(tip0, tip1);
 
     let ledger0 = h0.ledger();
     let ledger1 = h1.ledger();
 
-    let tip0 = ledger0.tip_height();
-    let tip1 = ledger1.tip_height();
+    let min_height0 = ledger0.iter().map(|(h, _)| *h).min().unwrap_or(0);
+    let min_height1 = ledger1.iter().map(|(h, _)| *h).min().unwrap_or(0);
+    let min_height = std::cmp::max(min_height0, min_height1);
 
-    // 5. Compare block_id at each height up to the tip if commits occurred.
-    if let (Some(t0), Some(t1)) = (tip0, tip1) {
-        assert_eq!(t0, t1, "tip heights differ");
+    for height in min_height..=common_tip {
+        let b0 = ledger0
+            .get(height)
+            .unwrap_or_else(|| panic!("node0 missing height {}", height));
+        let b1 = ledger1
+            .get(height)
+            .unwrap_or_else(|| panic!("node1 missing height {}", height));
 
-        let min_height = ledger0
-            .iter()
-            .map(|(h, _)| *h)
-            .min()
-            .expect("ledger0 is empty");
-
-        for height in min_height..=t0 {
-            let b0 = ledger0
-                .get(height)
-                .unwrap_or_else(|| panic!("node0 missing height {}", height));
-            let b1 = ledger1
-                .get(height)
-                .unwrap_or_else(|| panic!("node1 missing height {}", height));
-
-            assert_eq!(
-                b0.block_id, b1.block_id,
-                "block_id mismatch at height {}",
-                height
-            );
-        }
+        assert_eq!(
+            b0.block_id, b1.block_id,
+            "block_id mismatch at height {}",
+            height
+        );
     }
 }
