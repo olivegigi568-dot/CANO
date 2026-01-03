@@ -317,14 +317,14 @@ fn make_single_node_config() -> NodeValidatorConfig {
 // Tests
 // ============================================================================
 
-/// Test that a single-node harness yields commits and drain clears them.
+/// Test that a single-node harness yields commits tracked by the commit index.
 ///
 /// This test:
 /// 1. Creates a single-node harness
-/// 2. Drives the harness until at least one commit happens
-/// 3. Asserts that drain_commits() returns non-empty
-/// 4. Asserts that drain_commits() again returns empty
-/// 5. Verifies heights are non-decreasing
+/// 2. Drives the harness until at least one commit happens (tracked by commit index)
+/// 3. Asserts that commit_tip() returns Some with valid commit info
+/// 4. Asserts that commit_count() is at least 1
+/// 5. Verifies that drain_commits() is now empty (since step_once drains internally)
 #[test]
 fn node_hotstuff_single_node_drain_commits_yields_and_clears() {
     let setup = create_test_setup();
@@ -339,47 +339,37 @@ fn node_hotstuff_single_node_drain_commits_yields_and_clears() {
 
     // Drive the harness until at least one commit happens.
     // With a single node, we need several views to accumulate the 3-chain
-    // required for commit.
-    let mut all_commits: Vec<NodeCommitInfo<[u8; 32]>> = Vec::new();
+    // required for commit. The commit index now tracks commits internally
+    // via step_once().
     let max_iterations = 200;
 
     for _ in 0..max_iterations {
         harness.step_once().expect("step_once failed");
-        let new_commits = harness.drain_commits();
-        if !new_commits.is_empty() {
-            all_commits.extend(new_commits);
+        if harness.commit_tip().is_some() {
             break;
         }
     }
 
-    // Assert that we got at least one commit
+    // Assert that we got at least one commit (via commit index)
     assert!(
-        !all_commits.is_empty(),
+        harness.commit_tip().is_some(),
         "Expected at least one commit after {} iterations, got none",
         max_iterations
     );
-
-    // Call drain_commits() again - should return empty
-    let second_drain = harness.drain_commits();
     assert!(
-        second_drain.is_empty(),
-        "Expected drain_commits() to return empty after draining, got {} commits",
-        second_drain.len()
+        harness.commit_count() >= 1,
+        "Expected commit_count() >= 1, got {}",
+        harness.commit_count()
     );
 
-    // Verify heights are non-decreasing and >= 0
-    let mut prev_height: Option<u64> = None;
-    for commit in &all_commits {
-        if let Some(ph) = prev_height {
-            assert!(
-                commit.height >= ph,
-                "Commit heights not non-decreasing: {} < {}",
-                commit.height,
-                ph
-            );
-        }
-        prev_height = Some(commit.height);
-    }
+    // Call drain_commits() - should return empty because step_once() already 
+    // drains commits internally and applies them to the commit index
+    let drain_result = harness.drain_commits();
+    assert!(
+        drain_result.is_empty(),
+        "Expected drain_commits() to return empty after step_once (which drains internally), got {} commits",
+        drain_result.len()
+    );
 }
 
 /// Test that two nodes with configured but non-connected peers cannot reach quorum.
