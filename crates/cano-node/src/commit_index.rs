@@ -92,9 +92,10 @@ impl<BlockIdT: Clone + Eq> CommitIndex<BlockIdT> {
     /// - Guaranteed not to affect tip_height.
     /// - Safe to call repeatedly with increasing min_height.
     pub fn prune_below(&mut self, min_height: u64) {
-        // Use split_off to remove all entries with key < min_height.
-        // split_off(min_height) returns entries >= min_height, leaving < min_height in self.
-        // We want to keep entries >= min_height, so we use split_off and reassign.
+        // split_off(min_height) splits the map at the given key:
+        // - Returns a new BTreeMap containing all entries with key >= min_height
+        // - Leaves entries with key < min_height in the original map
+        // We want to keep entries >= min_height, so we reassign to the split_off result.
         self.commits_by_height = self.commits_by_height.split_off(&min_height);
     }
 
