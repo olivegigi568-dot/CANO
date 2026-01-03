@@ -110,6 +110,8 @@ pub struct StoredBlock {
     pub block_id: [u8; 32],
     /// The shared reference to the block proposal.
     pub proposal: SharedProposal,
+    /// The height of the block (from the proposal header).
+    pub height: u64,
 }
 
 // ============================================================================
@@ -212,12 +214,14 @@ impl BlockStore {
     /// The computed block ID for the stored proposal.
     pub fn store_proposal(&mut self, proposal: &BlockProposal) -> [u8; 32] {
         let block_id = Self::compute_block_id(proposal);
+        let height = proposal.header.height;
         let shared = Arc::new(proposal.clone());
         self.inner.insert(
             block_id,
             StoredBlock {
                 block_id,
                 proposal: shared,
+                height,
             },
         );
         block_id
@@ -234,12 +238,14 @@ impl BlockStore {
     /// - `block_id`: The pre-computed block ID
     /// - `proposal`: The block proposal to store
     pub fn store_proposal_with_id(&mut self, block_id: [u8; 32], proposal: &BlockProposal) {
+        let height = proposal.header.height;
         let shared = Arc::new(proposal.clone());
         self.inner.insert(
             block_id,
             StoredBlock {
                 block_id,
                 proposal: shared,
+                height,
             },
         );
     }
@@ -267,6 +273,7 @@ impl BlockStore {
     /// different proposal.
     pub fn insert(&mut self, proposal: BlockProposal) -> Result<[u8; 32], BlockStoreError> {
         let block_id = Self::compute_block_id(&proposal);
+        let height = proposal.header.height;
         let shared = Arc::new(proposal);
 
         if let Some(existing) = self.inner.get(&block_id) {
@@ -291,6 +298,7 @@ impl BlockStore {
             StoredBlock {
                 block_id,
                 proposal: shared,
+                height,
             },
         );
 
@@ -355,6 +363,14 @@ impl BlockStore {
     /// This removes all proposals from the store, freeing memory.
     pub fn clear(&mut self) {
         self.inner.clear();
+    }
+
+    /// Remove all stored proposals with height < min_height.
+    ///
+    /// This is safe once those blocks are finalized and no longer needed
+    /// for commit or ledger application.
+    pub fn prune_below(&mut self, min_height: u64) {
+        self.inner.retain(|_, stored| stored.height >= min_height);
     }
 }
 

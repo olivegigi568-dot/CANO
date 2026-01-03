@@ -87,6 +87,17 @@ impl<BlockIdT: Clone + Eq> CommitIndex<BlockIdT> {
         }
     }
 
+    /// Remove all commits with height < min_height.
+    ///
+    /// - Guaranteed not to affect tip_height.
+    /// - Safe to call repeatedly with increasing min_height.
+    pub fn prune_below(&mut self, min_height: u64) {
+        // Use split_off to remove all entries with key < min_height.
+        // split_off(min_height) returns entries >= min_height, leaving < min_height in self.
+        // We want to keep entries >= min_height, so we use split_off and reassign.
+        self.commits_by_height = self.commits_by_height.split_off(&min_height);
+    }
+
     /// Returns `true` if no commits have been recorded.
     pub fn is_empty(&self) -> bool {
         self.tip_height.is_none()

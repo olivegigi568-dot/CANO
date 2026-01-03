@@ -567,4 +567,16 @@ impl NodeHotstuffHarness {
 
         Ok(result)
     }
+
+    // ========================================================================
+    // Pruning
+    // ========================================================================
+
+    /// Prune internal commit index and block store below the given height.
+    ///
+    /// Safe to call after the ledger has applied all commits up to at least `min_height`.
+    pub fn prune_below_height(&mut self, min_height: u64) {
+        self.commit_index.prune_below(min_height);
+        self.block_store.prune_below(min_height);
+    }
 }

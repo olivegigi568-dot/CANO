@@ -135,6 +135,14 @@ where
 
         Ok(())
     }
+
+    /// Prune the node's internal commit index and block store below the given height.
+    ///
+    /// This is a convenience method that delegates to the underlying
+    /// `NodeHotstuffHarness::prune_below_height()`.
+    pub fn prune_below_height(&mut self, min_height: u64) {
+        self.node.prune_below_height(min_height);
+    }
 }
 
 // ============================================================================
