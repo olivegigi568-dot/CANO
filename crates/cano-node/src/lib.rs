@@ -15,6 +15,7 @@
 //!
 //! No networking, no DAG, no signing or IO.
 
+pub mod block_store;
 pub mod commit_index;
 pub mod consensus_net;
 pub mod consensus_node;
@@ -27,6 +28,7 @@ pub mod peer_manager;
 pub mod secure_channel;
 pub mod validator_config;
 
+pub use block_store::BlockStore;
 pub use commit_index::{CommitIndex, CommitIndexError};
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
 pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError, NodeCommitInfo};
