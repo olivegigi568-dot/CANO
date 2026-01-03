@@ -110,6 +110,14 @@ impl<BlockIdT: Clone + Eq> CommitIndex<BlockIdT> {
         self.commits_by_height.get(&height)
     }
 
+    /// Returns an iterator over all commits by ascending height.
+    ///
+    /// This allows iterating over committed blocks in height order without
+    /// modifying the commit index.
+    pub fn iter_by_height(&self) -> impl Iterator<Item = (&u64, &NodeCommitInfo<BlockIdT>)> {
+        self.commits_by_height.iter()
+    }
+
     /// Apply a batch of new commits, in order, enforcing height monotonicity
     /// and non-conflicting blocks at each height.
     ///

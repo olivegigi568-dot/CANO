@@ -29,6 +29,7 @@ use crate::peer_manager::PeerManager;
 
 use cano_consensus::hotstuff_state_engine::CommittedEntry;
 use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError, ValidatorId};
+use cano_wire::consensus::BlockProposal;
 
 // ============================================================================
 // NodeCommitInfo
@@ -60,6 +61,31 @@ impl<BlockIdT: Clone> From<CommittedEntry<BlockIdT>> for NodeCommitInfo<BlockIdT
             height: entry.height,
         }
     }
+}
+
+// ============================================================================
+// NodeCommittedBlock
+// ============================================================================
+
+/// A committed block record that pairs commit metadata with the corresponding proposal.
+///
+/// This struct provides a node-friendly view of a committed block, combining:
+/// - Commit metadata from `NodeCommitInfo` (block_id, view, height)
+/// - The corresponding `BlockProposal` from the block store
+///
+/// # Type Parameter
+///
+/// - `BlockIdT`: The type used to identify blocks. The canonical type is `[u8; 32]`.
+#[derive(Clone, Debug)]
+pub struct NodeCommittedBlock<BlockIdT> {
+    /// The block identifier that was committed.
+    pub block_id: BlockIdT,
+    /// The view at which the block was proposed.
+    pub view: u64,
+    /// The height of the block in the chain from genesis.
+    pub height: u64,
+    /// The block proposal associated with this committed block.
+    pub proposal: BlockProposal,
 }
 
 // ============================================================================

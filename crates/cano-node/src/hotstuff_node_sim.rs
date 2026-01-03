@@ -27,7 +27,7 @@
 use crate::block_store::BlockStore;
 use crate::commit_index::{CommitIndex, CommitIndexError};
 use crate::consensus_net::ConsensusNetAdapter;
-use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo};
+use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo, NodeCommittedBlock};
 use crate::consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
 use crate::net_service::{NetService, NetServiceConfig, NetServiceError};
 use crate::validator_config::NodeValidatorConfig;
@@ -61,6 +61,11 @@ pub enum NodeHotstuffHarnessError {
     Io(io::Error),
     /// Configuration or setup error.
     Config(String),
+    /// A block was committed in the commit index, but no proposal was found in the block store.
+    MissingProposalForCommittedBlock {
+        block_id: [u8; 32],
+        height: u64,
+    },
 }
 
 impl From<NodeConsensusSimError> for NodeHotstuffHarnessError {
@@ -102,6 +107,13 @@ impl std::fmt::Display for NodeHotstuffHarnessError {
             NodeHotstuffHarnessError::CommitIndex(e) => write!(f, "commit index error: {}", e),
             NodeHotstuffHarnessError::Io(e) => write!(f, "io error: {}", e),
             NodeHotstuffHarnessError::Config(s) => write!(f, "config error: {}", s),
+            NodeHotstuffHarnessError::MissingProposalForCommittedBlock { block_id, height } => {
+                write!(
+                    f,
+                    "missing proposal for committed block at height {}: block_id={:?}",
+                    height, block_id
+                )
+            }
         }
     }
 }
@@ -139,6 +151,9 @@ pub struct NodeHotstuffHarness {
     commit_index: CommitIndex<[u8; 32]>,
     /// Local block store for proposals broadcast by this node.
     block_store: BlockStore,
+    /// Height of the last commit exposed via `drain_committed_blocks()`.
+    /// `None` means no commits have been drained yet.
+    last_drained_height: Option<u64>,
 }
 
 impl NodeHotstuffHarness {
@@ -194,6 +209,7 @@ impl NodeHotstuffHarness {
             sim,
             commit_index,
             block_store,
+            last_drained_height: None,
         })
     }
 
@@ -477,5 +493,61 @@ impl NodeHotstuffHarness {
     /// A reference to the stored `BlockProposal`, or `None` if not found.
     pub fn get_proposal(&self, block_id: &[u8; 32]) -> Option<&cano_wire::consensus::BlockProposal> {
         self.block_store.get(block_id)
+    }
+
+    // ========================================================================
+    // Draining committed blocks
+    // ========================================================================
+
+    /// Drain newly committed blocks (height > last_drained_height) in ascending
+    /// height order. Each block is returned exactly once.
+    ///
+    /// Returns an empty `Vec` if there are no new commits.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NodeHotstuffHarnessError::MissingProposalForCommittedBlock` if a
+    /// committed block's proposal is not found in the block store. This should not
+    /// happen in normal operation.
+    pub fn drain_committed_blocks(&mut self) -> Result<Vec<NodeCommittedBlock<[u8; 32]>>, NodeHotstuffHarnessError> {
+        let mut result = Vec::new();
+        let last = self.last_drained_height;
+
+        let mut max_seen = last;
+
+        for (height, info) in self.commit_index.iter_by_height() {
+            // Skip heights that have already been drained
+            if let Some(last_h) = last {
+                if *height <= last_h {
+                    continue;
+                }
+            }
+
+            let block_id = info.block_id;
+            let stored = self
+                .block_store
+                .get(&block_id)
+                .ok_or(NodeHotstuffHarnessError::MissingProposalForCommittedBlock {
+                    block_id,
+                    height: *height,
+                })?;
+
+            let committed = NodeCommittedBlock {
+                block_id,
+                view: info.view,
+                height: info.height,
+                proposal: stored.clone(),
+            };
+            result.push(committed);
+
+            max_seen = Some(max_seen.map_or(*height, |curr| curr.max(*height)));
+        }
+
+        // Update the drain cursor
+        if let Some(max_h) = max_seen {
+            self.last_drained_height = Some(max_h);
+        }
+
+        Ok(result)
     }
 }
