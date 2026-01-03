@@ -276,6 +276,7 @@ impl BasicHotStuffEngine<[u8; 32]> {
                 }
             }),
             txs: vec![],
+            signature: vec![],
         };
 
         self.proposed_in_view = true;

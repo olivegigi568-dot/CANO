@@ -46,6 +46,7 @@ fn make_dummy_proposal(height: u64, round: u64) -> BlockProposal {
         },
         qc: None,
         txs: vec![],
+        signature: vec![],
     }
 }
 

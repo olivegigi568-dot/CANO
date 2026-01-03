@@ -68,6 +68,7 @@ fn roundtrip_block_proposal_no_qc() {
         },
         qc: None,
         txs: vec![],
+        signature: vec![],
     };
 
     let mut encoded = Vec::new();
@@ -114,6 +115,7 @@ fn roundtrip_block_proposal_with_qc_and_txs() {
             vec![0x01, 0x02, 0x03],
             vec![0x04, 0x05, 0x06, 0x07],
         ],
+        signature: vec![0xDE, 0xAD, 0xBE, 0xEF],
     };
 
     let mut encoded = Vec::new();
