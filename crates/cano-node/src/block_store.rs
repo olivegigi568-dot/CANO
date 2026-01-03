@@ -72,7 +72,7 @@ impl fmt::Display for BlockStoreError {
             } => {
                 write!(
                     f,
-                    "conflicting proposal for block_id {:?}: existing_proposer={}, new_proposer={}",
+                    "conflicting proposal for block_id {:?}: proposals differ (existing_proposer={}, new_proposer={})",
                     block_id, existing_proposer, new_proposer
                 )
             }

@@ -377,6 +377,9 @@ fn block_store_insert_errors_on_conflicting_proposal() {
 // Integration Tests
 // ============================================================================
 
+/// Maximum number of steps to run before expecting a commit.
+const MAX_STEPS_FOR_COMMIT: usize = 200;
+
 /// Test that a single node stores proposals in the block store and they match committed blocks.
 ///
 /// Scenario:
@@ -396,7 +399,7 @@ fn single_node_committed_blocks_have_proposals_in_store() {
     .expect("failed to create harness");
 
     // Step until we see commits
-    for _ in 0..200 {
+    for _ in 0..MAX_STEPS_FOR_COMMIT {
         harness.step_once().expect("step_once failed");
         if harness.committed_height().is_some() {
             break;
