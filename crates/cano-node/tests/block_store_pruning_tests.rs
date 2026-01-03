@@ -29,6 +29,7 @@ fn make_dummy_proposal(proposer_index: u16, height: u64, parent: [u8; 32]) -> Bl
         },
         qc: None,
         txs: vec![],
+        signature: vec![],
     }
 }
 

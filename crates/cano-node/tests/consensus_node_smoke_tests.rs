@@ -361,6 +361,7 @@ fn make_dummy_block_proposal() -> BlockProposal {
         header,
         qc: Some(qc),
         txs,
+        signature: vec![],
     }
 }
 

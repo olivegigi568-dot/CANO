@@ -157,6 +157,7 @@ fn basic_block_proposal() -> BlockProposal {
         },
         qc: Some(qc),
         txs: Vec::new(),
+        signature: vec![],
     }
 }
 
@@ -183,6 +184,7 @@ fn make_block_at_height_with_qc_height(
         },
         qc: Some(qc),
         txs: Vec::new(),
+        signature: vec![],
     }
 }
 
@@ -416,6 +418,7 @@ fn hotstuff_accepts_proposal_without_qc_when_lock_is_zero() {
         },
         qc: None,
         txs: Vec::new(),
+        signature: vec![],
     };
 
     let decision =
@@ -450,6 +453,7 @@ fn hotstuff_rejects_proposal_without_qc_when_locked() {
         },
         qc: None,
         txs: Vec::new(),
+        signature: vec![],
     };
 
     let err = hotstuff_decide_and_maybe_record_vote(
