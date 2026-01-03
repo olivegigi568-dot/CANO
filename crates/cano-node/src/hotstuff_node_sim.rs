@@ -282,6 +282,7 @@ impl NodeHotstuffHarness {
 
         // 2. Process pending network events.
         // We process multiple events per step to ensure responsiveness.
+        // Run all iterations to ensure we don't miss any messages.
         for _ in 0..10 {
             let peers = self.sim.node.net_service().peers();
             let mut adapter = ConsensusNetAdapter::new(peers);
@@ -325,10 +326,9 @@ impl NodeHotstuffHarness {
                         // but we don't need to take any network action for it.
                     }
                 }
-            } else {
-                // No more events, break out of the loop
-                break;
             }
+            // Continue all iterations to ensure we process all pending messages.
+            // With non-blocking I/O, messages may arrive at any time.
         }
 
         // 3. Try to propose if we are the leader for the current view.
