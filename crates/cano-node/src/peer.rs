@@ -158,6 +158,18 @@ impl Peer {
     pub fn set_last_pong_for_test(&mut self, ts: Option<Instant>) {
         self.last_pong = ts;
     }
+
+    /// Set the underlying socket to non-blocking mode.
+    ///
+    /// This should be called after the handshake is complete to enable
+    /// non-blocking reads for application data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ChannelError` if setting non-blocking mode fails.
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), ChannelError> {
+        self.channel.set_nonblocking(nonblocking)
+    }
 }
 
 /// Convert a WireError into a ChannelError.
