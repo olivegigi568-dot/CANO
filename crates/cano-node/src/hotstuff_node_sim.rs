@@ -540,10 +540,7 @@ impl NodeHotstuffHarness {
             };
             result.push(committed);
 
-            max_seen = Some(match max_seen {
-                Some(curr) => curr.max(*height),
-                None => *height,
-            });
+            max_seen = Some(max_seen.map_or(*height, |curr| curr.max(*height)));
         }
 
         // Update the drain cursor
