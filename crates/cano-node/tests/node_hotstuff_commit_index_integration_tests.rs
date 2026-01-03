@@ -345,14 +345,14 @@ fn node_hotstuff_commit_index_tracks_tip() {
 
     // Assert that we got a commit
     let tip = harness.commit_tip().expect("no commit tip after iterations");
-    // Note: height can be 0 for the first committed block
+    // Verify that commit_count matches expectation (tip exists, so at least 1)
     assert!(
         harness.commit_count() >= 1,
         "Expected at least 1 commit, got {}",
         harness.commit_count()
     );
 
-    // Assert that committed_height() returns the same height
+    // Assert that committed_height() returns the same height as tip
     assert_eq!(
         harness.committed_height(),
         Some(tip.height),
@@ -378,26 +378,31 @@ fn node_hotstuff_commit_index_monotonic_heights() {
     )
     .expect("failed to create harness");
 
+    let mut saw_commit = false;
     let mut last_height: u64 = 0;
     let max_iterations = 200;
 
     for _ in 0..max_iterations {
         harness.step_once().expect("step_once failed");
         if let Some(h) = harness.committed_height() {
-            assert!(
-                h >= last_height,
-                "Commit heights not monotonic: {} < {}",
-                h,
-                last_height
-            );
+            // If this is not our first commit, assert monotonicity
+            if saw_commit {
+                assert!(
+                    h >= last_height,
+                    "Commit heights not monotonic: {} < {}",
+                    h,
+                    last_height
+                );
+            }
+            saw_commit = true;
             last_height = h;
         }
     }
 
     // Assert that we saw at least one commit
     assert!(
-        last_height > 0,
-        "Expected to see at least one commit, but last_height is 0"
+        saw_commit,
+        "Expected to see at least one commit, but saw none"
     );
 
     // Assert that commit_count() is at least 1
