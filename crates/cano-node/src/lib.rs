@@ -29,7 +29,7 @@ pub mod peer_manager;
 pub mod secure_channel;
 pub mod validator_config;
 
-pub use block_store::BlockStore;
+pub use block_store::{BlockStore, BlockStoreError};
 pub use commit_index::{CommitIndex, CommitIndexError};
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
 pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError, NodeCommitInfo, NodeCommittedBlock};

@@ -36,9 +36,51 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fmt;
 
 use cano_consensus::ids::ValidatorId;
 use cano_wire::consensus::BlockProposal;
+
+// ============================================================================
+// BlockStoreError
+// ============================================================================
+
+/// Error type for `BlockStore` operations.
+#[derive(Debug, Clone)]
+pub enum BlockStoreError {
+    /// Attempt to insert a different proposal for the same block_id.
+    ///
+    /// This indicates a serious consistency error: the same block_id should
+    /// always map to an identical proposal.
+    ConflictingProposal {
+        /// The block_id that caused the conflict.
+        block_id: [u8; 32],
+        /// The proposer index of the existing proposal.
+        existing_proposer: u16,
+        /// The proposer index of the new proposal.
+        new_proposer: u16,
+    },
+}
+
+impl fmt::Display for BlockStoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BlockStoreError::ConflictingProposal {
+                block_id,
+                existing_proposer,
+                new_proposer,
+            } => {
+                write!(
+                    f,
+                    "conflicting proposal for block_id {:?}: proposals differ (existing_proposer={}, new_proposer={})",
+                    block_id, existing_proposer, new_proposer
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BlockStoreError {}
 
 // ============================================================================
 // BlockStore
@@ -156,6 +198,52 @@ impl BlockStore {
     /// - `proposal`: The block proposal to store
     pub fn store_proposal_with_id(&mut self, block_id: [u8; 32], proposal: &BlockProposal) {
         self.proposals.insert(block_id, proposal.clone());
+    }
+
+    /// Idempotent insert of a proposal into the block store.
+    ///
+    /// The block ID is computed automatically from the proposal header.
+    ///
+    /// # Behavior
+    ///
+    /// - If no proposal exists for the computed block_id, the proposal is inserted.
+    /// - If a proposal with the same block_id and identical content already exists,
+    ///   this is treated as a no-op and returns `Ok(block_id)`.
+    /// - If a proposal with the same block_id but **different** content exists,
+    ///   returns `Err(BlockStoreError::ConflictingProposal)`.
+    ///
+    /// # Arguments
+    ///
+    /// - `proposal`: The block proposal to insert
+    ///
+    /// # Returns
+    ///
+    /// `Ok(block_id)` on success (including idempotent re-inserts), or
+    /// `Err(BlockStoreError::ConflictingProposal)` if the block_id maps to a
+    /// different proposal.
+    pub fn insert(&mut self, proposal: BlockProposal) -> Result<[u8; 32], BlockStoreError> {
+        let block_id = Self::compute_block_id(&proposal);
+
+        if let Some(existing) = self.proposals.get(&block_id) {
+            // If the same block_id with an identical proposal is inserted again,
+            // treat this as idempotent and return Ok without error.
+            if *existing == proposal {
+                return Ok(block_id);
+            }
+
+            // If the same block_id maps to a different proposal, this is a serious
+            // consistency error.
+            return Err(BlockStoreError::ConflictingProposal {
+                block_id,
+                existing_proposer: existing.header.proposer_index,
+                new_proposer: proposal.header.proposer_index,
+            });
+        }
+
+        // Otherwise, insert normally.
+        self.proposals.insert(block_id, proposal);
+
+        Ok(block_id)
     }
 
     /// Retrieve a proposal by its block ID.
