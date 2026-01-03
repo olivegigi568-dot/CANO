@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockStore, BlockStoreError};
 use crate::commit_index::{CommitIndex, CommitIndexError};
 use crate::consensus_net::ConsensusNetAdapter;
 use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo, NodeCommittedBlock};
@@ -57,6 +57,8 @@ pub enum NodeHotstuffHarnessError {
     ConsensusNode(ConsensusNodeError),
     /// Error from commit index operations.
     CommitIndex(CommitIndexError<[u8; 32]>),
+    /// Error from block store operations.
+    BlockStore(BlockStoreError),
     /// I/O error.
     Io(io::Error),
     /// Configuration or setup error.
@@ -98,6 +100,12 @@ impl From<CommitIndexError<[u8; 32]>> for NodeHotstuffHarnessError {
     }
 }
 
+impl From<BlockStoreError> for NodeHotstuffHarnessError {
+    fn from(e: BlockStoreError) -> Self {
+        NodeHotstuffHarnessError::BlockStore(e)
+    }
+}
+
 impl std::fmt::Display for NodeHotstuffHarnessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -105,6 +113,7 @@ impl std::fmt::Display for NodeHotstuffHarnessError {
             NodeHotstuffHarnessError::NetService(e) => write!(f, "net service error: {:?}", e),
             NodeHotstuffHarnessError::ConsensusNode(e) => write!(f, "consensus node error: {:?}", e),
             NodeHotstuffHarnessError::CommitIndex(e) => write!(f, "commit index error: {}", e),
+            NodeHotstuffHarnessError::BlockStore(e) => write!(f, "block store error: {}", e),
             NodeHotstuffHarnessError::Io(e) => write!(f, "io error: {}", e),
             NodeHotstuffHarnessError::Config(s) => write!(f, "config error: {}", s),
             NodeHotstuffHarnessError::MissingProposalForCommittedBlock { block_id, height } => {
@@ -286,6 +295,11 @@ impl NodeHotstuffHarness {
                 // Convert PeerId to ValidatorId for the engine
                 match event {
                     ConsensusNetworkEvent::IncomingProposal { from, proposal } => {
+                        // Store the incoming proposal in the block store (idempotent).
+                        // This ensures that followers have proposals available for
+                        // committed blocks proposed by other validators.
+                        self.block_store.insert(proposal.clone())?;
+
                         // Look up the ValidatorId for this peer
                         let from_validator = self.sim.node.get_validator_for_peer(&from)
                             .unwrap_or(ValidatorId::new(from.0));
