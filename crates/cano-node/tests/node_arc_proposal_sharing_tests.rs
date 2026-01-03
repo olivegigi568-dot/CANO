@@ -1,19 +1,21 @@
-//! Integration tests for `drain_committed_blocks()` in `NodeHotstuffHarness`.
+//! Tests for Arc<BlockProposal> sharing between BlockStore and InMemoryLedger.
 //!
 //! These tests verify that:
-//! - `drain_committed_blocks()` returns an empty Vec initially
-//! - Each committed block is returned exactly once (handle-once semantics)
-//! - The returned proposals match those in the block store
+//! - BlockStore and InMemoryLedger share the same `Arc<BlockProposal>` instances
+//! - No additional `BlockProposal` clones occur during the commit flow
+//! - `Arc::ptr_eq` confirms pointer equality between stored and ledger proposals
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use cano_consensus::ids::ValidatorId;
 use cano_crypto::{AeadSuite, CryptoError, KemSuite, SignatureSuite, StaticCryptoProvider};
+use cano_ledger::InMemoryLedger;
 use cano_net::{
     ClientConnectionConfig, ClientHandshakeConfig, ServerConnectionConfig, ServerHandshakeConfig,
 };
 use cano_node::hotstuff_node_sim::NodeHotstuffHarness;
+use cano_node::ledger_bridge::InMemoryNodeLedgerHarness;
 use cano_node::validator_config::{LocalValidatorConfig, NodeValidatorConfig};
 use cano_wire::io::WireEncode;
 use cano_wire::net::NetworkDelegationCert;
@@ -312,187 +314,120 @@ fn make_single_node_config() -> NodeValidatorConfig {
 }
 
 // ============================================================================
-// Integration Tests
+// Arc Sharing Tests
 // ============================================================================
 
-/// Test that `drain_committed_blocks()` returns an empty Vec initially.
+/// Test that committed blocks share the same `Arc<BlockProposal>` between
+/// the BlockStore and the InMemoryLedger.
 ///
-/// Scenario:
-/// 1. Build a single-node harness
-/// 2. Call `drain_committed_blocks()` immediately
-/// 3. Assert that it returns an empty Vec
+/// This verifies that:
+/// 1. When a block is committed, the proposal Arc in the ledger is the same
+///    as the Arc in the block store (pointer equality via `Arc::ptr_eq`).
+/// 2. No additional BlockProposal clones occur during the commit flow.
 #[test]
-fn drain_committed_blocks_is_initially_empty() {
+fn committed_blocks_share_proposal_arc_between_block_store_and_ledger() {
     let setup = create_test_setup();
     let cfg = make_single_node_config();
 
-    let mut harness = NodeHotstuffHarness::new_from_validator_config(
+    let node = NodeHotstuffHarness::new_from_validator_config(
         &cfg,
         setup.client_cfg,
         setup.server_cfg,
     )
-    .expect("failed to create harness");
+    .expect("failed to create node harness");
+    let ledger = InMemoryLedger::<[u8; 32]>::new();
 
-    // Call drain_committed_blocks immediately (before any steps)
-    let drained = harness.drain_committed_blocks().expect("drain failed");
-    assert!(
-        drained.is_empty(),
-        "Expected empty drain initially, got {} blocks",
-        drained.len()
-    );
-}
+    let mut harness = InMemoryNodeLedgerHarness::new(node, ledger);
 
-/// Test that `drain_committed_blocks()` returns each commit exactly once.
-///
-/// Scenario:
-/// 1. Build a single-node harness
-/// 2. Step until we see some commits
-/// 3. First drain should return the commits in ascending height order
-/// 4. Second drain (without more steps) should return empty
-#[test]
-fn drain_committed_blocks_returns_commits_once() {
-    let setup = create_test_setup();
-    let cfg = make_single_node_config();
-
-    let mut harness = NodeHotstuffHarness::new_from_validator_config(
-        &cfg,
-        setup.client_cfg,
-        setup.server_cfg,
-    )
-    .expect("failed to create harness");
-
-    // Step the harness until we observe a commit
-    for _ in 0..200 {
+    // Drive the node until it has at least one commit.
+    const MAX_STEPS: usize = 400;
+    for _ in 0..MAX_STEPS {
         harness.step_once().expect("step_once failed");
-        if harness.committed_height().is_some() {
+        if harness.ledger().tip_height().is_some() {
             break;
         }
     }
 
-    // First drain: should return the commits
-    let first = harness.drain_committed_blocks().expect("drain failed");
-    assert!(
-        !first.is_empty(),
-        "Expected at least one committed block after stepping"
-    );
+    let tip = harness
+        .ledger()
+        .tip_height()
+        .expect("ledger had no commits after max steps");
 
-    // Verify heights are in ascending order
-    let first_heights: Vec<u64> = first.iter().map(|c| c.height).collect();
-    assert!(
-        first_heights.windows(2).all(|w| w[0] <= w[1]),
-        "Heights should be in ascending order: {:?}",
-        first_heights
-    );
+    // For each height up to tip, the proposal Arc in the ledger should
+    // be pointer-equal to the proposal Arc in the block store.
+    let node = harness.node();
+    let store = node.block_store();
+    let ledger = harness.ledger();
 
-    // Second drain (without more steps): should be empty
-    let second = harness.drain_committed_blocks().expect("drain failed");
-    assert!(
-        second.is_empty(),
-        "Second drain should see no new commits, got {} blocks",
-        second.len()
-    );
-}
+    for (height, info) in ledger.iter() {
+        assert!(*height <= tip);
 
-/// Test that drained proposals match those in the block store.
-///
-/// Scenario:
-/// 1. Build a single-node harness
-/// 2. Step until we see commits
-/// 3. Drain committed blocks
-/// 4. For each drained block, verify the proposal matches the block store
-#[test]
-fn drain_committed_blocks_yields_proposals_matching_store() {
-    let setup = create_test_setup();
-    let cfg = make_single_node_config();
+        let stored = store
+            .get(&info.block_id)
+            .unwrap_or_else(|| panic!("missing stored block for height {}", height));
 
-    let mut harness = NodeHotstuffHarness::new_from_validator_config(
-        &cfg,
-        setup.client_cfg,
-        setup.server_cfg,
-    )
-    .expect("failed to create harness");
-
-    // Step the harness until we observe a commit
-    for _ in 0..200 {
-        harness.step_once().expect("step_once failed");
-        if harness.committed_height().is_some() {
-            break;
-        }
-    }
-
-    // Drain committed blocks
-    let drained = harness.drain_committed_blocks().expect("drain failed");
-
-    // Verify that each drained block's proposal matches the block store
-    let store = harness.block_store();
-    for c in &drained {
-        let stored = store.get(&c.block_id).expect("missing proposal in store");
-        // Compare the dereferenced Arc values (both are Arc<BlockProposal>)
-        assert_eq!(
-            *stored.proposal, *c.proposal,
-            "Proposal mismatch for block at height {}",
-            c.height
-        );
-    }
-}
-
-/// Test that subsequent drains return new commits after more steps.
-///
-/// Scenario:
-/// 1. Build a single-node harness
-/// 2. Step until we see commits, then drain
-/// 3. Step some more
-/// 4. Drain again - should return only the new commits
-#[test]
-fn drain_committed_blocks_returns_only_new_commits() {
-    let setup = create_test_setup();
-    let cfg = make_single_node_config();
-
-    let mut harness = NodeHotstuffHarness::new_from_validator_config(
-        &cfg,
-        setup.client_cfg,
-        setup.server_cfg,
-    )
-    .expect("failed to create harness");
-
-    // Step the harness until we observe a commit
-    for _ in 0..200 {
-        harness.step_once().expect("step_once failed");
-        if harness.committed_height().is_some() {
-            break;
-        }
-    }
-
-    // First drain
-    let first = harness.drain_committed_blocks().expect("drain failed");
-    let first_max_height = first.iter().map(|c| c.height).max();
-
-    // Continue stepping to potentially get more commits
-    let initial_commit_count = harness.commit_count();
-    for _ in 0..100 {
-        harness.step_once().expect("step_once failed");
-    }
-
-    // Second drain should only contain blocks with height > first_max_height
-    let second = harness.drain_committed_blocks().expect("drain failed");
-
-    // All heights in second drain should be greater than first_max_height (if any)
-    if let Some(max_h) = first_max_height {
-        for c in &second {
-            assert!(
-                c.height > max_h,
-                "Second drain should only have heights > {}, got {}",
-                max_h,
-                c.height
-            );
-        }
-    }
-
-    // If we got more commits, second should not be empty
-    if harness.commit_count() > initial_commit_count {
+        // Both sides now hold Arc<BlockProposal>. They should point to the same allocation.
         assert!(
-            !second.is_empty(),
-            "Expected new commits in second drain after more steps"
+            Arc::ptr_eq(&stored.proposal, &info.proposal),
+            "proposal Arc not shared between block store and ledger at height {}",
+            height
         );
     }
+}
+
+/// Test that multiple ledger entries from consecutive commits all share
+/// their respective Arc<BlockProposal> with the BlockStore.
+#[test]
+fn multiple_committed_blocks_all_share_arc_with_store() {
+    let setup = create_test_setup();
+    let cfg = make_single_node_config();
+
+    let node = NodeHotstuffHarness::new_from_validator_config(
+        &cfg,
+        setup.client_cfg,
+        setup.server_cfg,
+    )
+    .expect("failed to create node harness");
+    let ledger = InMemoryLedger::<[u8; 32]>::new();
+
+    let mut harness = InMemoryNodeLedgerHarness::new(node, ledger);
+
+    // Drive the node until we have multiple commits
+    const MAX_STEPS: usize = 500;
+    let target_commits = 3;
+
+    for _ in 0..MAX_STEPS {
+        harness.step_once().expect("step_once failed");
+        if harness.ledger().len() >= target_commits {
+            break;
+        }
+    }
+
+    let ledger_len = harness.ledger().len();
+    assert!(
+        ledger_len >= 1,
+        "expected at least 1 commit, got {}",
+        ledger_len
+    );
+
+    let node = harness.node();
+    let store = node.block_store();
+    let ledger = harness.ledger();
+
+    let mut checked = 0;
+    for (_height, info) in ledger.iter() {
+        let stored = store
+            .get(&info.block_id)
+            .expect("block store missing proposal");
+
+        // Verify Arc pointer equality
+        assert!(
+            Arc::ptr_eq(&stored.proposal, &info.proposal),
+            "Arc not shared at block_id {:?}",
+            info.block_id
+        );
+        checked += 1;
+    }
+
+    assert!(checked >= 1, "no blocks were checked");
 }

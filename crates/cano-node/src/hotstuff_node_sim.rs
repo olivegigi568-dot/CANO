@@ -496,7 +496,7 @@ impl NodeHotstuffHarness {
         self.block_store.len()
     }
 
-    /// Retrieve a proposal from the block store by its block ID.
+    /// Retrieve a stored block from the block store by its block ID.
     ///
     /// # Arguments
     ///
@@ -504,8 +504,8 @@ impl NodeHotstuffHarness {
     ///
     /// # Returns
     ///
-    /// A reference to the stored `BlockProposal`, or `None` if not found.
-    pub fn get_proposal(&self, block_id: &[u8; 32]) -> Option<&cano_wire::consensus::BlockProposal> {
+    /// A reference to the stored `StoredBlock`, or `None` if not found.
+    pub fn get_proposal(&self, block_id: &[u8; 32]) -> Option<&crate::block_store::StoredBlock> {
         self.block_store.get(block_id)
     }
 
@@ -546,11 +546,14 @@ impl NodeHotstuffHarness {
                     height: *height,
                 })?;
 
+            // Clone the Arc handle only, not the full proposal
+            let proposal_arc = stored.proposal.clone();
+
             let committed = NodeCommittedBlock {
                 block_id,
                 view: info.view,
                 height: info.height,
-                proposal: stored.clone(),
+                proposal: proposal_arc,
             };
             result.push(committed);
 

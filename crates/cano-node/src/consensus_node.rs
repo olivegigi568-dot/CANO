@@ -21,6 +21,7 @@
 //! This mapping is not yet enforced at runtime, but provides a place for future
 //! tasks to add cryptographic verification.
 
+use crate::block_store::SharedProposal;
 use crate::consensus_net::ConsensusNetAdapter;
 use crate::identity_map::PeerValidatorMap;
 use crate::net_service::{NetService, NetServiceError};
@@ -29,7 +30,6 @@ use crate::peer_manager::PeerManager;
 
 use cano_consensus::hotstuff_state_engine::CommittedEntry;
 use cano_consensus::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError, ValidatorId};
-use cano_wire::consensus::BlockProposal;
 
 // ============================================================================
 // NodeCommitInfo
@@ -71,7 +71,10 @@ impl<BlockIdT: Clone> From<CommittedEntry<BlockIdT>> for NodeCommitInfo<BlockIdT
 ///
 /// This struct provides a node-friendly view of a committed block, combining:
 /// - Commit metadata from `NodeCommitInfo` (block_id, view, height)
-/// - The corresponding `BlockProposal` from the block store
+/// - The corresponding `SharedProposal` (Arc<BlockProposal>) from the block store
+///
+/// Using `SharedProposal` allows zero-copy sharing of the proposal with other
+/// components like the ledger, avoiding expensive clones of large payloads.
 ///
 /// # Type Parameter
 ///
@@ -84,8 +87,8 @@ pub struct NodeCommittedBlock<BlockIdT> {
     pub view: u64,
     /// The height of the block in the chain from genesis.
     pub height: u64,
-    /// The block proposal associated with this committed block.
-    pub proposal: BlockProposal,
+    /// The shared block proposal associated with this committed block.
+    pub proposal: SharedProposal,
 }
 
 // ============================================================================

@@ -127,9 +127,10 @@ where
         let committed: Vec<NodeCommittedBlock<[u8; 32]>> = self.node.drain_committed_blocks()?;
 
         // 3. Apply them to the ledger in order
+        // We clone the Arc handle only, not the full proposal
         for block in committed {
             self.ledger
-                .apply_committed_block(block.height, block.block_id, &block.proposal)?;
+                .apply_committed_block(block.height, block.block_id, block.proposal.clone())?;
         }
 
         Ok(())
