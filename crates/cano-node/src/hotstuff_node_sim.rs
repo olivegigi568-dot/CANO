@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use crate::block_store::BlockStore;
 use crate::commit_index::{CommitIndex, CommitIndexError};
 use crate::consensus_net::ConsensusNetAdapter;
 use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo};
@@ -117,6 +118,7 @@ impl std::error::Error for NodeHotstuffHarnessError {}
 /// - `NodeConsensusSim<HotStuffDriver<BasicHotStuffEngine<[u8; 32]>>>` which owns
 ///   the `ConsensusNode` (with real TCP networking) and the consensus driver
 /// - `CommitIndex<[u8; 32]>` which tracks the canonical committed chain
+/// - `BlockStore` which stores locally broadcast block proposals
 ///
 /// The harness provides a simplified interface for:
 /// - Creating nodes from `NodeValidatorConfig`
@@ -135,6 +137,8 @@ pub struct NodeHotstuffHarness {
     pub sim: NodeConsensusSim<HotStuffDriver<BasicHotStuffEngine<[u8; 32]>, [u8; 32]>>,
     /// The commit index tracking the canonical committed chain.
     commit_index: CommitIndex<[u8; 32]>,
+    /// Local block store for proposals broadcast by this node.
+    block_store: BlockStore,
 }
 
 impl NodeHotstuffHarness {
@@ -182,10 +186,14 @@ impl NodeHotstuffHarness {
         // 7. Initialize an empty commit index.
         let commit_index = CommitIndex::new();
 
+        // 8. Initialize an empty block store.
+        let block_store = BlockStore::new();
+
         Ok(NodeHotstuffHarness {
             validator_id: local_id,
             sim,
             commit_index,
+            block_store,
         })
     }
 
@@ -308,6 +316,15 @@ impl NodeHotstuffHarness {
     }
 
     /// Apply a consensus engine action to the network.
+    ///
+    /// When a `BroadcastProposal` action is received, the proposal is:
+    /// 1. Stored in the local `BlockStore` for later retrieval
+    /// 2. Broadcast to all connected peers
+    ///
+    /// This ensures that locally proposed blocks are available for:
+    /// - Commit index lookups
+    /// - State machine replay
+    /// - Debugging and inspection
     fn apply_action(
         &mut self,
         action: ConsensusEngineAction<ValidatorId>,
@@ -319,6 +336,10 @@ impl NodeHotstuffHarness {
 
         match action {
             ConsensusEngineAction::BroadcastProposal(proposal) => {
+                // Store the proposal in our local block store before broadcasting.
+                // This ensures we have a copy of all proposals we create.
+                let _block_id = self.block_store.store_proposal(&proposal);
+
                 ConsensusNetwork::broadcast_proposal(&mut adapter, &proposal)
                     .map_err(|e| NodeHotstuffHarnessError::Config(format!("broadcast proposal error: {}", e)))?;
             }
@@ -415,5 +436,46 @@ impl NodeHotstuffHarness {
     /// Returns the number of committed blocks tracked by the commit index.
     pub fn commit_count(&self) -> usize {
         self.commit_index.len()
+    }
+
+    // ========================================================================
+    // BlockStore accessors
+    // ========================================================================
+
+    /// Access the block store.
+    ///
+    /// Returns a reference to the local block store containing all
+    /// proposals that have been broadcast by this node.
+    pub fn block_store(&self) -> &BlockStore {
+        &self.block_store
+    }
+
+    /// Mutably access the block store.
+    ///
+    /// Allows direct manipulation of the block store, such as clearing
+    /// old proposals or adding proposals received from other sources.
+    pub fn block_store_mut(&mut self) -> &mut BlockStore {
+        &mut self.block_store
+    }
+
+    /// Get the number of proposals stored in the block store.
+    ///
+    /// This reflects the number of proposals that have been broadcast
+    /// by this node (and stored locally).
+    pub fn block_store_count(&self) -> usize {
+        self.block_store.len()
+    }
+
+    /// Retrieve a proposal from the block store by its block ID.
+    ///
+    /// # Arguments
+    ///
+    /// - `block_id`: The block ID to look up
+    ///
+    /// # Returns
+    ///
+    /// A reference to the stored `BlockProposal`, or `None` if not found.
+    pub fn get_proposal(&self, block_id: &[u8; 32]) -> Option<&cano_wire::consensus::BlockProposal> {
+        self.block_store.get(block_id)
     }
 }
