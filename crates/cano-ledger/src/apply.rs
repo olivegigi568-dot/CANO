@@ -49,6 +49,8 @@ impl<BlockIdT: fmt::Debug> fmt::Display for LedgerError<BlockIdT> {
     }
 }
 
+impl<BlockIdT: fmt::Debug> std::error::Error for LedgerError<BlockIdT> {}
+
 /// Ledger-side view of a committed block.
 #[derive(Clone, Debug)]
 pub struct LedgerBlockInfo<BlockIdT> {
