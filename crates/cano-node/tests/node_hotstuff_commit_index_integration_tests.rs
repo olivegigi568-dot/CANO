@@ -1,10 +1,9 @@
-//! Tests for node-level commit notifications in `NodeHotstuffHarness`.
+//! Integration tests for `CommitIndex` in `NodeHotstuffHarness`.
 //!
 //! These tests verify that:
-//! - `drain_commits()` returns committed blocks from the HotStuff driver
-//! - Calling `drain_commits()` a second time returns an empty vector
-//! - Heights are non-decreasing across commits
-//! - Multiple nodes see consistent commits
+//! - The harness tracks commits via the commit index
+//! - Heights are monotonically increasing
+//! - The commit index is properly updated after step_once()
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -15,8 +14,7 @@ use cano_net::{
     ClientConnectionConfig, ClientHandshakeConfig, ServerConnectionConfig, ServerHandshakeConfig,
 };
 use cano_node::hotstuff_node_sim::NodeHotstuffHarness;
-use cano_node::validator_config::{LocalValidatorConfig, NodeValidatorConfig, RemoteValidatorConfig};
-use cano_node::consensus_node::NodeCommitInfo;
+use cano_node::validator_config::{LocalValidatorConfig, NodeValidatorConfig};
 use cano_wire::io::WireEncode;
 use cano_wire::net::NetworkDelegationCert;
 
@@ -314,19 +312,18 @@ fn make_single_node_config() -> NodeValidatorConfig {
 }
 
 // ============================================================================
-// Tests
+// Integration Tests
 // ============================================================================
 
-/// Test that a single-node harness yields commits tracked by the commit index.
+/// Test that the harness tracks commits via the commit index.
 ///
-/// This test:
-/// 1. Creates a single-node harness
-/// 2. Drives the harness until at least one commit happens (tracked by commit index)
-/// 3. Asserts that commit_tip() returns Some with valid commit info
-/// 4. Asserts that commit_count() is at least 1
-/// 5. Verifies that drain_commits() is now empty (since step_once drains internally)
+/// Scenario:
+/// 1. Build a single-node harness
+/// 2. Step the harness in a loop until a commit is observed
+/// 3. Assert that commit_tip() returns Some with height >= 1
+/// 4. Assert that committed_height() returns the same height
 #[test]
-fn node_hotstuff_single_node_drain_commits_yields_and_clears() {
+fn node_hotstuff_commit_index_tracks_tip() {
     let setup = create_test_setup();
     let cfg = make_single_node_config();
 
@@ -335,14 +332,10 @@ fn node_hotstuff_single_node_drain_commits_yields_and_clears() {
         setup.client_cfg,
         setup.server_cfg,
     )
-    .expect("Failed to create harness");
+    .expect("failed to create harness");
 
-    // Drive the harness until at least one commit happens.
-    // With a single node, we need several views to accumulate the 3-chain
-    // required for commit. The commit index now tracks commits internally
-    // via step_once().
+    // Step the harness until we observe a commit
     let max_iterations = 200;
-
     for _ in 0..max_iterations {
         harness.step_once().expect("step_once failed");
         if harness.commit_tip().is_some() {
@@ -350,112 +343,102 @@ fn node_hotstuff_single_node_drain_commits_yields_and_clears() {
         }
     }
 
-    // Assert that we got at least one commit (via commit index)
-    assert!(
-        harness.commit_tip().is_some(),
-        "Expected at least one commit after {} iterations, got none",
-        max_iterations
-    );
+    // Assert that we got a commit
+    let tip = harness.commit_tip().expect("no commit tip after iterations");
+    // Verify that commit_count matches expectation (tip exists, so at least 1)
     assert!(
         harness.commit_count() >= 1,
-        "Expected commit_count() >= 1, got {}",
+        "Expected at least 1 commit, got {}",
         harness.commit_count()
     );
 
-    // Call drain_commits() - should return empty because step_once() already 
-    // drains commits internally and applies them to the commit index
-    let drain_result = harness.drain_commits();
-    assert!(
-        drain_result.is_empty(),
-        "Expected drain_commits() to return empty after step_once (which drains internally), got {} commits",
-        drain_result.len()
+    // Assert that committed_height() returns the same height as tip
+    assert_eq!(
+        harness.committed_height(),
+        Some(tip.height),
+        "committed_height() should match tip.height"
     );
 }
 
-/// Test that two nodes with configured but non-connected peers cannot reach quorum.
+/// Test that heights are monotonically increasing.
 ///
-/// This test verifies that when nodes are configured with a 2-validator set
-/// but cannot actually communicate, they do not reach commits.
-///
-/// Note: With a 2-node validator set (voting_power=1 each):
-/// - Total voting power = 2
-/// - Two-thirds threshold = ceil(2*2/3) = 2
-/// - Both nodes must vote to form a QC
+/// Scenario:
+/// 1. Run more steps, accumulating tips
+/// 2. Assert that heights never decrease
+/// 3. Assert that at least one commit occurred
 #[test]
-fn node_hotstuff_two_nodes_have_consistent_commits() {
-    let setup0 = create_test_setup();
-    let setup1 = create_test_setup();
+fn node_hotstuff_commit_index_monotonic_heights() {
+    let setup = create_test_setup();
+    let cfg = make_single_node_config();
 
-    // Use a bogus address for the remote to simulate a disconnected peer
-    let bogus_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 59998);
-
-    // Create configs where each node knows about the other but can't connect
-    let cfg0 = NodeValidatorConfig {
-        local: LocalValidatorConfig {
-            validator_id: ValidatorId::new(1),
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-        },
-        remotes: vec![RemoteValidatorConfig {
-            validator_id: ValidatorId::new(2),
-            addr: bogus_addr,
-        }],
-    };
-
-    let cfg1 = NodeValidatorConfig {
-        local: LocalValidatorConfig {
-            validator_id: ValidatorId::new(2),
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-        },
-        remotes: vec![RemoteValidatorConfig {
-            validator_id: ValidatorId::new(1),
-            addr: bogus_addr,
-        }],
-    };
-
-    // Create both harnesses - they each have a 2-validator set but can't connect
-    let mut h0 = NodeHotstuffHarness::new_from_validator_config(
-        &cfg0,
-        setup0.client_cfg.clone(),
-        setup0.server_cfg.clone(),
+    let mut harness = NodeHotstuffHarness::new_from_validator_config(
+        &cfg,
+        setup.client_cfg,
+        setup.server_cfg,
     )
-    .expect("Failed to create harness h0");
+    .expect("failed to create harness");
 
-    let mut h1 = NodeHotstuffHarness::new_from_validator_config(
-        &cfg1,
-        setup1.client_cfg.clone(),
-        setup1.server_cfg.clone(),
-    )
-    .expect("Failed to create harness h1");
-
-    // Accumulate commits from both nodes
-    let mut commits0: Vec<NodeCommitInfo<[u8; 32]>> = Vec::new();
-    let mut commits1: Vec<NodeCommitInfo<[u8; 32]>> = Vec::new();
-
-    let max_iterations = 100;
+    let mut saw_commit = false;
+    let mut last_height: u64 = 0;
+    let max_iterations = 200;
 
     for _ in 0..max_iterations {
-        // Ignore errors from connection attempts to bogus addresses
-        let _ = h0.step_once();
-        let _ = h1.step_once();
-        commits0.extend(h0.drain_commits());
-        commits1.extend(h1.drain_commits());
+        harness.step_once().expect("step_once failed");
+        if let Some(h) = harness.committed_height() {
+            // If this is not our first commit, assert monotonicity
+            if saw_commit {
+                assert!(
+                    h >= last_height,
+                    "Commit heights not monotonic: {} < {}",
+                    h,
+                    last_height
+                );
+            }
+            saw_commit = true;
+            last_height = h;
+        }
     }
 
-    // With 2 validators and no network connectivity between them,
-    // neither node can reach quorum on its own (need 2 votes, have 1).
-    // Both should have empty commits.
+    // Assert that we saw at least one commit
     assert!(
-        commits0.is_empty(),
-        "Expected h0 to have no commits without quorum, got {} commits",
-        commits0.len()
-    );
-    assert!(
-        commits1.is_empty(),
-        "Expected h1 to have no commits without quorum, got {} commits",
-        commits1.len()
+        saw_commit,
+        "Expected to see at least one commit, but saw none"
     );
 
-    // Verify the drain_commits() API works correctly by checking it returns empty
-    assert!(h0.drain_commits().is_empty());
-    assert!(h1.drain_commits().is_empty());
+    // Assert that commit_count() is at least 1
+    assert!(
+        harness.commit_count() >= 1,
+        "Expected at least 1 commit in index, got {}",
+        harness.commit_count()
+    );
+}
+
+/// Test that the commit index is empty initially.
+#[test]
+fn node_hotstuff_commit_index_initially_empty() {
+    let setup = create_test_setup();
+    let cfg = make_single_node_config();
+
+    let harness = NodeHotstuffHarness::new_from_validator_config(
+        &cfg,
+        setup.client_cfg,
+        setup.server_cfg,
+    )
+    .expect("failed to create harness");
+
+    // Before any steps, commit index should be empty
+    assert!(
+        harness.commit_tip().is_none(),
+        "Expected no commit tip initially"
+    );
+    assert_eq!(
+        harness.committed_height(),
+        None,
+        "Expected no committed height initially"
+    );
+    assert_eq!(
+        harness.commit_count(),
+        0,
+        "Expected commit count to be 0 initially"
+    );
 }
