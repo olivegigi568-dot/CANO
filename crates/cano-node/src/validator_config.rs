@@ -88,7 +88,7 @@ impl NodeValidatorConfig {
     /// Build a ValidatorKeyRegistry from this config, for tests.
     ///
     /// Each validator_id must appear at most once across local + remotes.
-    /// This method will panic (via debug_assert) if duplicate validator_ids are found.
+    /// This method will panic if duplicate validator_ids are found.
     pub fn build_validator_key_registry(&self) -> ValidatorKeyRegistry {
         let mut reg = ValidatorKeyRegistry::new();
 
@@ -101,7 +101,7 @@ impl NodeValidatorConfig {
             let id = remote.validator_id;
             let pk = ValidatorPublicKey(remote.consensus_pk.clone());
             let prev = reg.insert(id, pk);
-            debug_assert!(
+            assert!(
                 prev.is_none(),
                 "duplicate validator_id in NodeValidatorConfig: {:?}",
                 id
