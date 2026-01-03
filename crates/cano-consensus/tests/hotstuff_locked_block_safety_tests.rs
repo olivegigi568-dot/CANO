@@ -65,6 +65,7 @@ fn make_proposal(
         },
         qc: None,
         txs: vec![],
+        signature: vec![],
     }
 }
 

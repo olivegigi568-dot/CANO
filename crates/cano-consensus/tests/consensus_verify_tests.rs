@@ -263,6 +263,7 @@ fn make_block_proposal(
         },
         qc,
         txs: (0..tx_count).map(|i| vec![i as u8]).collect(),
+        signature: vec![],
     }
 }
 

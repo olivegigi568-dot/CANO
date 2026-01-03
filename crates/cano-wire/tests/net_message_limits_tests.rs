@@ -150,6 +150,7 @@ fn roundtrip_block_proposal_through_net_message() {
             vec![0x01, 0x02, 0x03],
             vec![0x04, 0x05, 0x06, 0x07],
         ],
+        signature: vec![],
     };
 
     let msg = NetMessage::BlockProposal(proposal.clone());
@@ -177,6 +178,7 @@ fn encode_small_block_proposal_succeeds_within_limit() {
         },
         qc: None,
         txs: vec![vec![0x00; 1024]], // 1 KB transaction
+        signature: vec![],
     };
 
     let msg = NetMessage::BlockProposal(proposal);
@@ -207,6 +209,7 @@ fn encode_oversized_block_proposal_returns_too_large_error() {
         },
         qc: None,
         txs: vec![large_tx_blob],
+        signature: vec![],
     };
 
     let msg = NetMessage::BlockProposal(proposal);
@@ -253,6 +256,7 @@ fn mixed_message_sequence_roundtrip() {
         },
         qc: None,
         txs: vec![],
+        signature: vec![],
     };
 
     // A mixed sequence of all message types

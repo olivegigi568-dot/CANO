@@ -152,6 +152,7 @@ fn basic_block_proposal() -> BlockProposal {
         },
         qc: Some(qc),
         txs: Vec::new(),
+        signature: vec![],
     }
 }
 

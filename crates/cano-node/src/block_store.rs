@@ -399,6 +399,7 @@ mod tests {
             },
             qc: None,
             txs: vec![],
+            signature: vec![],
         }
     }
 

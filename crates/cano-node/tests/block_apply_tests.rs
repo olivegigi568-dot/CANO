@@ -157,6 +157,7 @@ fn build_proposal_with_txs(txs: &[Transaction]) -> BlockProposal {
         },
         qc: None,
         txs: tx_blobs,
+        signature: vec![],
     }
 }
 
@@ -259,6 +260,7 @@ fn node_rejects_block_with_malformed_tx_blob() {
         },
         qc: None,
         txs: vec![malformed_blob],
+        signature: vec![],
     };
 
     let result = node.apply_block(&mut store, &proposal);
@@ -306,6 +308,7 @@ fn node_rejects_block_with_extra_bytes_after_tx() {
         },
         qc: None,
         txs: vec![blob],
+        signature: vec![],
     };
 
     let result = node.apply_block(&mut store, &proposal);

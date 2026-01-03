@@ -20,6 +20,7 @@ fn make_dummy_proposal(height: u64) -> BlockProposal {
         header,
         qc: None,
         txs: Vec::new(),
+        signature: vec![],
     }
 }
 
