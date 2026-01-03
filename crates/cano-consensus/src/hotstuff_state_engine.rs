@@ -478,13 +478,17 @@ where
         self.votes.vote_count(view, block_id)
     }
 
-    /// Returns true if it is safe to vote for the given block, i.e.,
-    /// either there is no locked QC yet, or the block is on a chain that
-    /// includes the locked block as an ancestor.
+    /// Returns true if it is safe to vote for the given block.
     ///
-    /// This implements the locked-block safety rule from HotStuff:
-    /// once a block L is locked (via locked_qc), a node must never vote
-    /// for a proposal whose chain conflicts with L.
+    /// This implements the standard HotStuff safe-voting rule. It is safe to
+    /// vote for a block B with justify_qc if EITHER:
+    /// 1. There is no locked QC yet, OR
+    /// 2. B extends the currently locked block (locked block is in B's ancestor chain), OR
+    /// 3. B's justify_qc.view >= locked_qc.view
+    ///
+    /// This rule preserves safety while allowing liveness: a node will not vote
+    /// for a block that conflicts with its lock unless the block has a QC from
+    /// a view at least as recent as the lock.
     ///
     /// # Arguments
     ///
@@ -493,7 +497,7 @@ where
     /// # Returns
     ///
     /// - `true` if it is safe to vote for this block
-    /// - `false` if voting for this block would violate the locked-block safety rule
+    /// - `false` if voting for this block would violate the safety rule
     pub fn is_safe_to_vote_on_block(&self, block_id: &BlockIdT) -> bool {
         // 1. If no locked qc yet, allow.
         let locked = match self.locked_qc.as_ref() {
@@ -502,7 +506,7 @@ where
         };
 
         // 2. Find this block's node.
-        let mut current = match self.blocks.get(block_id) {
+        let block_node = match self.blocks.get(block_id) {
             Some(node) => node,
             None => {
                 // If the block is not yet registered, return false for safety
@@ -512,8 +516,18 @@ where
             }
         };
 
-        // 3. Walk ancestors until genesis or until we find locked_qc.block_id.
+        // 3. Check if justify_qc.view >= locked_qc.view (liveness condition)
+        //    This is the standard HotStuff rule that allows progress even when
+        //    the block doesn't directly extend the locked block.
+        if let Some(ref justify_qc) = block_node.justify_qc {
+            if justify_qc.view >= locked.view {
+                return true;
+            }
+        }
+
+        // 4. Walk ancestors until genesis or until we find locked_qc.block_id.
         let locked_block_id = &locked.block_id;
+        let mut current = block_node;
         loop {
             if &current.id == locked_block_id {
                 return true;
@@ -528,8 +542,9 @@ where
             };
         }
 
-        // If we walked the chain and didn't find the locked block, this block
-        // is on a conflicting fork; do not vote.
+        // If we walked the chain and didn't find the locked block, and the
+        // justify_qc.view was not >= locked_qc.view, this block conflicts
+        // with our lock; do not vote.
         false
     }
 }

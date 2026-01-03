@@ -332,7 +332,7 @@ impl NodeHotstuffHarness {
         }
 
         // 3. Try to propose if we are the leader for the current view.
-        if let Some(action) = self.sim.driver.engine_mut().try_propose() {
+        for action in self.sim.driver.engine_mut().try_propose() {
             self.apply_action(action)?;
         }
 

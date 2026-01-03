@@ -108,7 +108,7 @@ impl ConsensusEngineDriver<MockConsensusNetwork<ValidatorId>> for BasicHotStuffE
         }
 
         // Try to generate a proposal if we're the leader
-        if let Some(action) = self.engine.try_propose() {
+        for action in self.engine.try_propose() {
             actions.push(action);
         }
 
@@ -221,19 +221,18 @@ fn basic_hotstuff_two_node_leader_commits_blocks() {
     // - Both nodes to vote
     // - QCs to form
     // - Multiple rounds to get 3-chain commits
-    let iterations = 20;
+    let iterations = 50;
     for _ in 0..iterations {
         sim.step_once().unwrap();
     }
 
-    // Verify that the protocol ran without crashing and blocks were registered.
-    // With the locked-block safety rule and optimistic view advancement,
-    // commits may not occur in this two-node scenario without additional
-    // protocol mechanics (like leader vote broadcast or synchronized view changes).
+    // Verify that the protocol ran correctly with T72 requirements:
+    // - Both nodes should have committed blocks (3-chain rule achieved)
+    // - Both nodes should agree on committed blocks
     let driver1 = sim.drivers.get(&ValidatorId(1)).unwrap();
     let driver2 = sim.drivers.get(&ValidatorId(2)).unwrap();
 
-    // Both engines should have registered at least one block (the initial proposal)
+    // Both engines should have registered multiple blocks
     assert!(
         driver1.engine().state().block_count() >= 1,
         "Node 1 should have registered at least one block"
@@ -243,10 +242,50 @@ fn basic_hotstuff_two_node_leader_commits_blocks() {
         "Node 2 should have registered at least one block"
     );
 
-    // The locked-block safety rule is enforced, so commits may not occur.
-    // If a commit did occur, that's also valid (the safety rule allows valid commits).
-    // This test primarily verifies that the protocol handles the two-node scenario
-    // without crashing or deadlocking, and that blocks are properly registered.
+    // T72: Both nodes should have commits (3-chain rule satisfied)
+    assert!(
+        driver1.engine().committed_block().is_some(),
+        "Node 1 should have committed at least one block after {} iterations, view={}, blocks={}",
+        iterations,
+        driver1.engine().current_view(),
+        driver1.engine().state().block_count()
+    );
+    assert!(
+        driver2.engine().committed_block().is_some(),
+        "Node 2 should have committed at least one block after {} iterations, view={}, blocks={}",
+        iterations,
+        driver2.engine().current_view(),
+        driver2.engine().state().block_count()
+    );
+
+    // T72: Both nodes should have matching commit logs
+    let log1 = driver1.engine().commit_log();
+    let log2 = driver2.engine().commit_log();
+
+    // Both logs should have at least one entry
+    assert!(
+        !log1.is_empty(),
+        "Node 1 commit log should not be empty"
+    );
+    assert!(
+        !log2.is_empty(),
+        "Node 2 commit log should not be empty"
+    );
+
+    // Compare committed blocks at matching heights
+    let min_len = std::cmp::min(log1.len(), log2.len());
+    for i in 0..min_len {
+        assert_eq!(
+            log1[i].block_id, log2[i].block_id,
+            "Commit log mismatch at index {}: node1={:?}, node2={:?}",
+            i, log1[i], log2[i]
+        );
+        assert_eq!(
+            log1[i].height, log2[i].height,
+            "Height mismatch at index {}: node1={}, node2={}",
+            i, log1[i].height, log2[i].height
+        );
+    }
 }
 
 // ============================================================================
