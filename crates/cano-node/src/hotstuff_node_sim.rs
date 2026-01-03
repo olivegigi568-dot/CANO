@@ -24,6 +24,7 @@
 //! }
 //! ```
 
+use crate::commit_index::{CommitIndex, CommitIndexError};
 use crate::consensus_net::ConsensusNetAdapter;
 use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo};
 use crate::consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
@@ -53,6 +54,8 @@ pub enum NodeHotstuffHarnessError {
     NetService(NetServiceError),
     /// Error from `ConsensusNode`.
     ConsensusNode(ConsensusNodeError),
+    /// Error from commit index operations.
+    CommitIndex(CommitIndexError<[u8; 32]>),
     /// I/O error.
     Io(io::Error),
     /// Configuration or setup error.
@@ -83,12 +86,19 @@ impl From<io::Error> for NodeHotstuffHarnessError {
     }
 }
 
+impl From<CommitIndexError<[u8; 32]>> for NodeHotstuffHarnessError {
+    fn from(e: CommitIndexError<[u8; 32]>) -> Self {
+        NodeHotstuffHarnessError::CommitIndex(e)
+    }
+}
+
 impl std::fmt::Display for NodeHotstuffHarnessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeHotstuffHarnessError::Sim(e) => write!(f, "sim error: {}", e),
             NodeHotstuffHarnessError::NetService(e) => write!(f, "net service error: {:?}", e),
             NodeHotstuffHarnessError::ConsensusNode(e) => write!(f, "consensus node error: {:?}", e),
+            NodeHotstuffHarnessError::CommitIndex(e) => write!(f, "commit index error: {}", e),
             NodeHotstuffHarnessError::Io(e) => write!(f, "io error: {}", e),
             NodeHotstuffHarnessError::Config(s) => write!(f, "config error: {}", s),
         }
@@ -106,6 +116,7 @@ impl std::error::Error for NodeHotstuffHarnessError {}
 /// This struct wraps:
 /// - `NodeConsensusSim<HotStuffDriver<BasicHotStuffEngine<[u8; 32]>>>` which owns
 ///   the `ConsensusNode` (with real TCP networking) and the consensus driver
+/// - `CommitIndex<[u8; 32]>` which tracks the canonical committed chain
 ///
 /// The harness provides a simplified interface for:
 /// - Creating nodes from `NodeValidatorConfig`
@@ -122,6 +133,8 @@ pub struct NodeHotstuffHarness {
     pub validator_id: ValidatorId,
     /// The underlying simulation harness.
     pub sim: NodeConsensusSim<HotStuffDriver<BasicHotStuffEngine<[u8; 32]>, [u8; 32]>>,
+    /// The commit index tracking the canonical committed chain.
+    commit_index: CommitIndex<[u8; 32]>,
 }
 
 impl NodeHotstuffHarness {
@@ -166,9 +179,13 @@ impl NodeHotstuffHarness {
         // 6. Build NodeConsensusSim from node + driver.
         let sim = NodeConsensusSim::new(consensus_node, driver);
 
+        // 7. Initialize an empty commit index.
+        let commit_index = CommitIndex::new();
+
         Ok(NodeHotstuffHarness {
             validator_id: local_id,
             sim,
+            commit_index,
         })
     }
 
@@ -219,6 +236,7 @@ impl NodeHotstuffHarness {
     /// 3. Processes events through the `BasicHotStuffEngine` methods
     /// 4. Tries to propose if this node is the leader
     /// 5. Applies resulting actions back to the network
+    /// 6. Drains new commits and applies them to the commit index
     ///
     /// This is a HotStuff-specific step function that directly drives the
     /// `BasicHotStuffEngine` for proposal generation, vote processing, and
@@ -278,6 +296,12 @@ impl NodeHotstuffHarness {
         // 3. Try to propose if we are the leader for the current view.
         if let Some(action) = self.sim.driver.engine_mut().try_propose() {
             self.apply_action(action)?;
+        }
+
+        // 4. Drain new commits and apply to commit index.
+        let new_commits: Vec<NodeCommitInfo<[u8; 32]>> = self.sim.drain_commits();
+        if !new_commits.is_empty() {
+            self.commit_index.apply_commits(new_commits)?;
         }
 
         Ok(())
@@ -372,5 +396,24 @@ impl NodeHotstuffHarness {
     /// empty vector if no new commits have occurred.
     pub fn drain_commits(&mut self) -> Vec<NodeCommitInfo<[u8; 32]>> {
         self.sim.drain_commits()
+    }
+
+    /// Returns the current committed tip from the commit index, if any.
+    ///
+    /// This reflects the highest committed block tracked by the node's commit index.
+    pub fn commit_tip(&self) -> Option<&NodeCommitInfo<[u8; 32]>> {
+        self.commit_index.tip()
+    }
+
+    /// Returns the current committed height from the commit index, if any.
+    ///
+    /// This is the height of the highest committed block tracked by the node.
+    pub fn committed_height(&self) -> Option<u64> {
+        self.commit_index.tip().map(|c| c.height)
+    }
+
+    /// Returns the number of committed blocks tracked by the commit index.
+    pub fn commit_count(&self) -> usize {
+        self.commit_index.len()
     }
 }
