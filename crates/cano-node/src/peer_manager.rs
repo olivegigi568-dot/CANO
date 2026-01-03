@@ -282,6 +282,23 @@ impl PeerManager {
             Err(PeerManagerError::PeerNotFound(id))
         }
     }
+
+    /// Set all peer sockets to non-blocking mode.
+    ///
+    /// This should be called after all initial connections are established
+    /// to enable non-blocking reads for application data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PeerManagerError::Channel` if setting non-blocking mode fails
+    /// on any peer.
+    pub fn set_all_nonblocking(&mut self, nonblocking: bool) -> Result<(), PeerManagerError> {
+        for peer in self.peers.values_mut() {
+            peer.set_nonblocking(nonblocking)
+                .map_err(PeerManagerError::Channel)?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for PeerManager {

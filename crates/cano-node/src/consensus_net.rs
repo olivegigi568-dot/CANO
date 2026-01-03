@@ -148,7 +148,7 @@ impl<'a> ConsensusNetAdapter<'a> {
     ///
     /// This wraps `PeerManager::recv_from_any` and translates `NetMessage` into
     /// `ConsensusNetEvent`. Ping/Pong messages are handled internally by replying
-    /// or updating liveness, then continuing to receive the next message.
+    /// or updating liveness, then returning an error so the caller can retry.
     pub fn recv_one(&mut self) -> Result<ConsensusNetEvent, ConsensusNetError> {
         loop {
             let (from, msg) = self.peers.recv_from_any()?;
@@ -182,41 +182,42 @@ impl<'a> ConsensusNetAdapter<'a> {
     ///
     /// Returns:
     /// - `Ok(Some(event))` if a consensus message is available
-    /// - `Ok(None)` if no message is currently available
+    /// - `Ok(None)` if no message is currently available OR if a Ping/Pong was handled
     /// - `Err(ConsensusNetError)` on real errors
     ///
     /// Ping/Pong messages are handled internally (reply/update liveness) and
-    /// this method will continue polling until a consensus message is found
-    /// or no more messages are available.
+    /// this method returns `Ok(None)` to allow the caller to poll again without
+    /// blocking. This is necessary because the underlying sockets use timeouts
+    /// rather than true non-blocking mode.
     pub fn try_recv_one_inner(&mut self) -> Result<Option<ConsensusNetEvent>, ConsensusNetError> {
-        loop {
-            match self.peers.try_recv_from_any()? {
-                Some((from, msg)) => {
-                    match msg {
-                        NetMessage::ConsensusVote(vote) => {
-                            return Ok(Some(ConsensusNetEvent::IncomingVote { from, vote }));
+        match self.peers.try_recv_from_any()? {
+            Some((from, msg)) => {
+                match msg {
+                    NetMessage::ConsensusVote(vote) => {
+                        Ok(Some(ConsensusNetEvent::IncomingVote { from, vote }))
+                    }
+                    NetMessage::BlockProposal(proposal) => {
+                        Ok(Some(ConsensusNetEvent::IncomingProposal { from, proposal }))
+                    }
+                    NetMessage::Ping(nonce) => {
+                        // Reply with Pong.
+                        if let Some(peer) = self.peers.get_peer_mut(from) {
+                            let _ = peer.handle_incoming_ping(nonce);
                         }
-                        NetMessage::BlockProposal(proposal) => {
-                            return Ok(Some(ConsensusNetEvent::IncomingProposal { from, proposal }));
+                        // Return None so caller can poll again without blocking.
+                        Ok(None)
+                    }
+                    NetMessage::Pong(nonce) => {
+                        // Update liveness.
+                        if let Some(peer) = self.peers.get_peer_mut(from) {
+                            peer.handle_incoming_pong(nonce);
                         }
-                        NetMessage::Ping(nonce) => {
-                            // Reply with Pong and continue polling.
-                            if let Some(peer) = self.peers.get_peer_mut(from) {
-                                let _ = peer.handle_incoming_ping(nonce);
-                            }
-                            // Continue loop to check for more messages.
-                        }
-                        NetMessage::Pong(nonce) => {
-                            // Update liveness and continue polling.
-                            if let Some(peer) = self.peers.get_peer_mut(from) {
-                                peer.handle_incoming_pong(nonce);
-                            }
-                            // Continue loop to check for more messages.
-                        }
+                        // Return None so caller can poll again without blocking.
+                        Ok(None)
                     }
                 }
-                None => return Ok(None),
             }
+            None => Ok(None),
         }
     }
 }

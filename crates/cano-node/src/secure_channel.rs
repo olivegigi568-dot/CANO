@@ -184,4 +184,17 @@ impl SecureChannel {
     pub fn is_established(&self) -> bool {
         self.conn.is_established()
     }
+
+    /// Set the socket to non-blocking mode for recv operations.
+    ///
+    /// This should be called after the handshake is complete to enable
+    /// non-blocking reads for application data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ChannelError::Io` if setting non-blocking mode fails.
+    pub fn set_nonblocking(&mut self, nonblocking: bool) -> Result<(), ChannelError> {
+        self.stream.set_nonblocking(nonblocking)?;
+        Ok(())
+    }
 }
