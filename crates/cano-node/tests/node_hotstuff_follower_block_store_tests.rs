@@ -413,8 +413,9 @@ fn single_node_committed_blocks_have_proposals_in_store() {
     let store = harness.block_store();
     for c in &committed {
         let stored = store.get(&c.block_id).expect("proposal should exist in store");
+        // Compare the dereferenced Arc values (both are Arc<BlockProposal>)
         assert_eq!(
-            *stored, c.proposal,
+            *stored.proposal, *c.proposal,
             "Proposal mismatch for block at height {}",
             c.height
         );

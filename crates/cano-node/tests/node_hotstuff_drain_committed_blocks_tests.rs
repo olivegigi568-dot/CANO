@@ -427,8 +427,9 @@ fn drain_committed_blocks_yields_proposals_matching_store() {
     let store = harness.block_store();
     for c in &drained {
         let stored = store.get(&c.block_id).expect("missing proposal in store");
+        // Compare the dereferenced Arc values (both are Arc<BlockProposal>)
         assert_eq!(
-            *stored, c.proposal,
+            *stored.proposal, *c.proposal,
             "Proposal mismatch for block at height {}",
             c.height
         );

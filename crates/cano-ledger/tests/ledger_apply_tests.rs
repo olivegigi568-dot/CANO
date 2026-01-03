@@ -1,5 +1,6 @@
 use cano_ledger::{InMemoryLedger, LedgerApply, LedgerError};
 use cano_wire::consensus::{BlockHeader, BlockProposal};
+use std::sync::Arc;
 
 fn make_dummy_proposal(height: u64) -> BlockProposal {
     let header = BlockHeader {
@@ -30,19 +31,19 @@ fn ledger_applies_blocks_monotonically() {
     let block_id_2: [u8; 32] = [2; 32];
     let block_id_3: [u8; 32] = [3; 32];
 
-    let proposal_1 = make_dummy_proposal(1);
-    let proposal_2 = make_dummy_proposal(2);
-    let proposal_3 = make_dummy_proposal(3);
+    let proposal_1 = Arc::new(make_dummy_proposal(1));
+    let proposal_2 = Arc::new(make_dummy_proposal(2));
+    let proposal_3 = Arc::new(make_dummy_proposal(3));
 
     // Apply heights 1, 2, 3
     ledger
-        .apply_committed_block(1, block_id_1, &proposal_1)
+        .apply_committed_block(1, block_id_1, proposal_1)
         .expect("apply height 1");
     ledger
-        .apply_committed_block(2, block_id_2, &proposal_2)
+        .apply_committed_block(2, block_id_2, proposal_2)
         .expect("apply height 2");
     ledger
-        .apply_committed_block(3, block_id_3, &proposal_3)
+        .apply_committed_block(3, block_id_3, proposal_3)
         .expect("apply height 3");
 
     // Assert tip_height and len
@@ -67,16 +68,16 @@ fn ledger_rejects_height_regression() {
     let block_id_5: [u8; 32] = [5; 32];
     let block_id_4: [u8; 32] = [4; 32];
 
-    let proposal_5 = make_dummy_proposal(5);
-    let proposal_4 = make_dummy_proposal(4);
+    let proposal_5 = Arc::new(make_dummy_proposal(5));
+    let proposal_4 = Arc::new(make_dummy_proposal(4));
 
     // Apply height 5
     ledger
-        .apply_committed_block(5, block_id_5, &proposal_5)
+        .apply_committed_block(5, block_id_5, proposal_5)
         .expect("apply height 5");
 
     // Attempt to apply height 4 (regression)
-    let result = ledger.apply_committed_block(4, block_id_4, &proposal_4);
+    let result = ledger.apply_committed_block(4, block_id_4, proposal_4);
 
     match result {
         Err(LedgerError::HeightRegression {
@@ -97,15 +98,15 @@ fn ledger_rejects_conflicting_block_at_same_height() {
     let block_id_1: [u8; 32] = [1; 32];
     let block_id_2: [u8; 32] = [2; 32];
 
-    let proposal = make_dummy_proposal(10);
+    let proposal = Arc::new(make_dummy_proposal(10));
 
     // Apply height 10 with block_id = [1; 32]
     ledger
-        .apply_committed_block(10, block_id_1, &proposal)
+        .apply_committed_block(10, block_id_1, proposal.clone())
         .expect("apply height 10");
 
     // Try to apply height 10 with block_id = [2; 32] (conflict)
-    let result = ledger.apply_committed_block(10, block_id_2, &proposal);
+    let result = ledger.apply_committed_block(10, block_id_2, proposal);
 
     match result {
         Err(LedgerError::ConflictingBlockAtHeight {
@@ -126,16 +127,16 @@ fn ledger_is_idempotent_for_same_block() {
     let mut ledger = InMemoryLedger::<[u8; 32]>::new();
 
     let block_id: [u8; 32] = [9; 32];
-    let proposal = make_dummy_proposal(7);
+    let proposal = Arc::new(make_dummy_proposal(7));
 
     // Apply height 7 with block_id
     ledger
-        .apply_committed_block(7, block_id, &proposal)
+        .apply_committed_block(7, block_id, proposal.clone())
         .expect("apply height 7 first time");
 
     // Apply same height 7 with same block_id (idempotent)
     ledger
-        .apply_committed_block(7, block_id, &proposal)
+        .apply_committed_block(7, block_id, proposal)
         .expect("apply height 7 second time");
 
     // Should still have only one entry
@@ -151,19 +152,19 @@ fn ledger_iterates_in_height_order() {
     let block_id_3: [u8; 32] = [3; 32];
     let block_id_5: [u8; 32] = [5; 32];
 
-    let proposal_1 = make_dummy_proposal(1);
-    let proposal_3 = make_dummy_proposal(3);
-    let proposal_5 = make_dummy_proposal(5);
+    let proposal_1 = Arc::new(make_dummy_proposal(1));
+    let proposal_3 = Arc::new(make_dummy_proposal(3));
+    let proposal_5 = Arc::new(make_dummy_proposal(5));
 
     // Apply heights in monotonic order (1, 3, 5) with gaps
     ledger
-        .apply_committed_block(1, block_id_1, &proposal_1)
+        .apply_committed_block(1, block_id_1, proposal_1)
         .expect("apply height 1");
     ledger
-        .apply_committed_block(3, block_id_3, &proposal_3)
+        .apply_committed_block(3, block_id_3, proposal_3)
         .expect("apply height 3");
     ledger
-        .apply_committed_block(5, block_id_5, &proposal_5)
+        .apply_committed_block(5, block_id_5, proposal_5)
         .expect("apply height 5");
 
     // Confirm that ledger.iter() yields heights [1, 3, 5] in order

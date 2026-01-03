@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use cano_wire::consensus::BlockProposal;
 
@@ -56,7 +57,7 @@ impl<BlockIdT: fmt::Debug> std::error::Error for LedgerError<BlockIdT> {}
 pub struct LedgerBlockInfo<BlockIdT> {
     pub block_id: BlockIdT,
     pub height: u64,
-    pub proposal: BlockProposal,
+    pub proposal: Arc<BlockProposal>,
 }
 
 /// Trait for a ledger that can ingest committed blocks.
@@ -71,7 +72,7 @@ pub trait LedgerApply<BlockIdT> {
         &mut self,
         height: u64,
         block_id: BlockIdT,
-        proposal: &BlockProposal,
+        proposal: Arc<BlockProposal>,
     ) -> Result<(), Self::Error>;
 }
 
@@ -118,7 +119,7 @@ impl LedgerApply<[u8; 32]> for InMemoryLedger<[u8; 32]> {
         &mut self,
         height: u64,
         block_id: [u8; 32],
-        proposal: &BlockProposal,
+        proposal: Arc<BlockProposal>,
     ) -> Result<(), Self::Error> {
         // enforce monotonic height
         if let Some(tip) = self.tip_height {
@@ -146,7 +147,7 @@ impl LedgerApply<[u8; 32]> for InMemoryLedger<[u8; 32]> {
         let info = LedgerBlockInfo {
             block_id,
             height,
-            proposal: proposal.clone(),
+            proposal, // move Arc in; no BlockProposal clone here
         };
 
         self.applied.insert(height, info);
