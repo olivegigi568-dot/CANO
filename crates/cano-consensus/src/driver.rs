@@ -302,6 +302,25 @@ pub trait HasCommitLog<BlockIdT> {
     fn commit_log(&self) -> &[CommittedEntry<BlockIdT>];
 }
 
+/// Trait for types that support draining new commits.
+///
+/// This trait is typically implemented by driver types that wrap an engine
+/// with `HasCommitLog` and maintain internal state to track which commits
+/// have been consumed.
+///
+/// # Design Note
+///
+/// Unlike `HasCommitLog` which provides read-only access to the commit log,
+/// this trait supports stateful "drain" semantics where each commit is
+/// returned exactly once.
+pub trait DrainableCommitLog<BlockIdT> {
+    /// Returns all new commits since the last drain and advances internal tracking.
+    ///
+    /// This method provides "handle once then forget" semantics: each commit
+    /// is returned exactly once across multiple calls to this method.
+    fn drain_new_commits(&mut self) -> Vec<CommittedEntry<BlockIdT>>;
+}
+
 impl<E, BlockIdT> HotStuffDriver<E, BlockIdT>
 where
     BlockIdT: Clone,
@@ -343,6 +362,31 @@ where
         let out = slice.to_vec();
         self.last_commit_idx = log.len();
         out
+    }
+}
+
+// Implement HasCommitLog for HotStuffDriver when its engine implements HasCommitLog.
+// This allows HotStuffDriver to be used with generic bounds requiring HasCommitLog.
+impl<E, BlockIdT> HasCommitLog<BlockIdT> for HotStuffDriver<E, BlockIdT>
+where
+    BlockIdT: Clone,
+    E: HasCommitLog<BlockIdT>,
+{
+    fn commit_log(&self) -> &[CommittedEntry<BlockIdT>] {
+        self.engine.commit_log()
+    }
+}
+
+// Implement DrainableCommitLog for HotStuffDriver when its engine implements HasCommitLog.
+// This allows HotStuffDriver to be used with generic bounds requiring DrainableCommitLog.
+impl<E, BlockIdT> DrainableCommitLog<BlockIdT> for HotStuffDriver<E, BlockIdT>
+where
+    BlockIdT: Clone,
+    E: HasCommitLog<BlockIdT>,
+{
+    fn drain_new_commits(&mut self) -> Vec<CommittedEntry<BlockIdT>> {
+        // Delegate to the existing method
+        HotStuffDriver::drain_new_commits(self)
     }
 }
 

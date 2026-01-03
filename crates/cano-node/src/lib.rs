@@ -27,7 +27,7 @@ pub mod secure_channel;
 pub mod validator_config;
 
 pub use consensus_net::{ConsensusNetAdapter, ConsensusNetError, ConsensusNetEvent};
-pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError};
+pub use consensus_node::{ConsensusNode, ConsensusNodeError as NetConsensusNodeError, NodeCommitInfo};
 pub use consensus_sim::{NodeConsensusSim, NodeConsensusSimError};
 pub use hotstuff_node_sim::{NodeHotstuffHarness, NodeHotstuffHarnessError};
 pub use identity_map::PeerValidatorMap;

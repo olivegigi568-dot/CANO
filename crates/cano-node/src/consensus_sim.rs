@@ -30,8 +30,9 @@
 //! ```
 
 use crate::consensus_net::ConsensusNetAdapter;
-use crate::consensus_node::{ConsensusNode, ConsensusNodeError};
+use crate::consensus_node::{ConsensusNode, ConsensusNodeError, NodeCommitInfo};
 
+use cano_consensus::driver::DrainableCommitLog;
 use cano_consensus::{
     ConsensusEngineAction, ConsensusEngineDriver, ConsensusNetwork, NetworkError,
 };
@@ -101,6 +102,16 @@ impl<D> NodeConsensusSim<D> {
     pub fn new(node: ConsensusNode, driver: D) -> Self {
         NodeConsensusSim { node, driver }
     }
+
+    /// Access the underlying driver.
+    pub fn driver(&self) -> &D {
+        &self.driver
+    }
+
+    /// Mutably access the underlying driver.
+    pub fn driver_mut(&mut self) -> &mut D {
+        &mut self.driver
+    }
 }
 
 impl<D> NodeConsensusSim<D>
@@ -161,5 +172,33 @@ where
         };
 
         result
+    }
+}
+
+// ============================================================================
+// Commit notification methods for NodeConsensusSim
+// ============================================================================
+
+impl<D> NodeConsensusSim<D>
+where
+    D: DrainableCommitLog<[u8; 32]>,
+{
+    /// Drain all new commits known to the underlying consensus driver,
+    /// and present them as node-level commit info.
+    ///
+    /// This method delegates to the driver's `drain_new_commits()` and converts
+    /// each `CommittedEntry` to a `NodeCommitInfo`.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `NodeCommitInfo` representing all new commits since the last
+    /// time this method was called. Returns an empty vector if no new commits
+    /// have occurred.
+    pub fn drain_commits(&mut self) -> Vec<NodeCommitInfo<[u8; 32]>> {
+        self.driver
+            .drain_new_commits()
+            .into_iter()
+            .map(NodeCommitInfo::from)
+            .collect()
     }
 }
