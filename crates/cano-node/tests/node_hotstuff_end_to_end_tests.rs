@@ -310,6 +310,7 @@ fn node_hotstuff_harness_creates_from_config() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -338,6 +339,7 @@ fn node_hotstuff_single_node_commits() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![],
     };
@@ -384,11 +386,13 @@ fn node_hotstuff_single_node_no_quorum_no_commit() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: ValidatorId::new(2),
             // Use a bogus address - we won't actually connect
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 59999),
+            consensus_pk: vec![],
         }],
     };
 
@@ -426,15 +430,18 @@ fn node_validator_config_builds_consensus_validator_set() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+            consensus_pk: vec![],
         },
         remotes: vec![
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(2),
                 addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9001),
+                consensus_pk: vec![],
             },
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(3),
                 addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9002),
+                consensus_pk: vec![],
             },
         ],
     };

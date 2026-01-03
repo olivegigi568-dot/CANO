@@ -14,11 +14,14 @@
 //! - [`HotStuffDriver`]: Thin wrapper around the HotStuff consensus state
 //! - [`ValidatorContext`]: Wrapper around validator set for membership and quorum checks
 
+use std::sync::Arc;
+
 use crate::hotstuff_state_engine::CommittedEntry;
 use crate::ids::ValidatorId;
 use crate::network::{ConsensusNetwork, ConsensusNetworkEvent, NetworkError};
 use crate::qc::QuorumCertificate;
 use crate::validator_set::ConsensusValidatorSet;
+use crate::verify::ConsensusVerifier;
 use cano_wire::consensus::{BlockProposal, Vote};
 
 // ============================================================================
@@ -182,6 +185,10 @@ pub struct HotStuffDriver<E, BlockIdT = [u8; 32]> {
     /// Index into the engine's commit_log indicating how many entries
     /// have already been observed/consumed by this driver.
     last_commit_idx: usize,
+    /// Optional verifier for cryptographic signature verification.
+    verifier: Option<Arc<dyn ConsensusVerifier>>,
+    /// Counter for rejected messages due to invalid signatures.
+    rejected_invalid_signatures: u64,
 }
 
 impl<E, BlockIdT> HotStuffDriver<E, BlockIdT>
@@ -203,6 +210,8 @@ where
             qcs_formed: 0,
             last_qc: None,
             last_commit_idx: 0,
+            verifier: None,
+            rejected_invalid_signatures: 0,
         }
     }
 
@@ -221,6 +230,8 @@ where
             qcs_formed: 0,
             last_qc: None,
             last_commit_idx: 0,
+            verifier: None,
+            rejected_invalid_signatures: 0,
         }
     }
 
@@ -276,6 +287,23 @@ where
     pub fn record_qc(&mut self, qc: QuorumCertificate<BlockIdT>) {
         self.qcs_formed += 1;
         self.last_qc = Some(qc);
+    }
+
+    /// Attach a verifier to this driver.
+    ///
+    /// When a verifier is attached, the driver will verify incoming votes
+    /// and proposals before processing them. If verification fails, the
+    /// message is dropped and `rejected_invalid_signatures` is incremented.
+    ///
+    /// Returns `self` for method chaining.
+    pub fn with_verifier(mut self, verifier: Arc<dyn ConsensusVerifier>) -> Self {
+        self.verifier = Some(verifier);
+        self
+    }
+
+    /// Get the number of messages rejected due to invalid signatures.
+    pub fn rejected_invalid_signatures(&self) -> u64 {
+        self.rejected_invalid_signatures
     }
 
     /// Check if a validator ID is a member when validator context is available.
@@ -435,8 +463,17 @@ where
         if let Some(event) = maybe_event {
             match event {
                 ConsensusNetworkEvent::IncomingVote { from, vote } => {
-                    // Check validator membership if validator context is set
                     let validator_id = from.to_validator_id();
+
+                    // Step 1: Verify signature if verifier is attached
+                    if let Some(verifier) = &self.verifier {
+                        if verifier.verify_vote(validator_id, &vote).is_err() {
+                            self.rejected_invalid_signatures += 1;
+                            return Ok(vec![]);
+                        }
+                    }
+
+                    // Step 2: Check validator membership if validator context is set
                     if !self.check_membership(validator_id) {
                         // Vote from non-member: reject
                         self.rejected_votes += 1;
@@ -456,8 +493,17 @@ where
                     }
                 }
                 ConsensusNetworkEvent::IncomingProposal { from, proposal } => {
-                    // Check validator membership if validator context is set
                     let validator_id = from.to_validator_id();
+
+                    // Step 1: Verify signature if verifier is attached
+                    if let Some(verifier) = &self.verifier {
+                        if verifier.verify_proposal(validator_id, &proposal).is_err() {
+                            self.rejected_invalid_signatures += 1;
+                            return Ok(vec![]);
+                        }
+                    }
+
+                    // Step 2: Check validator membership if validator context is set
                     if !self.check_membership(validator_id) {
                         // Proposal from non-member: reject
                         self.rejected_proposals += 1;

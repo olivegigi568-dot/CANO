@@ -340,19 +340,23 @@ fn build_net_config_and_id_map_assigns_peer_ids_deterministically() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: "127.0.0.1:9000".parse().unwrap(),
+            consensus_pk: b"pk-1".to_vec(),
         },
         remotes: vec![
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(2),
                 addr: "127.0.0.1:9001".parse().unwrap(),
+                consensus_pk: b"pk-2".to_vec(),
             },
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(3),
                 addr: "127.0.0.1:9002".parse().unwrap(),
+                consensus_pk: b"pk-3".to_vec(),
             },
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(4),
                 addr: "127.0.0.1:9003".parse().unwrap(),
+                consensus_pk: b"pk-4".to_vec(),
             },
         ],
     };
@@ -441,15 +445,18 @@ fn build_net_config_and_id_map_is_deterministic() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(10),
             listen_addr: "127.0.0.1:8000".parse().unwrap(),
+            consensus_pk: b"pk-10".to_vec(),
         },
         remotes: vec![
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(20),
                 addr: "127.0.0.1:8001".parse().unwrap(),
+                consensus_pk: b"pk-20".to_vec(),
             },
             RemoteValidatorConfig {
                 validator_id: ValidatorId::new(30),
                 addr: "127.0.0.1:8002".parse().unwrap(),
+                consensus_pk: b"pk-30".to_vec(),
             },
         ],
     };
@@ -515,10 +522,12 @@ fn consensus_node_with_validator_config_uses_id_map_consistently() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: "127.0.0.1:0".parse().unwrap(), // Use port 0 for auto-assign
+            consensus_pk: b"pk-1".to_vec(),
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: ValidatorId::new(2),
             addr: "127.0.0.1:9999".parse().unwrap(), // Doesn't need to be reachable for this test
+            consensus_pk: b"pk-2".to_vec(),
         }],
     };
 
@@ -572,6 +581,7 @@ fn consensus_node_identity_map_lookup_on_incoming_vote() {
         local: LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
+            consensus_pk: b"pk-1".to_vec(),
         },
         remotes: vec![], // No remotes in config, we'll add manually
     };
@@ -675,4 +685,74 @@ fn consensus_node_identity_map_lookup_on_incoming_vote() {
         Some(expected_remote_validator_id),
         "Identity map lookup should return the expected ValidatorId"
     );
+}
+
+/// Test that build_validator_key_registry() correctly creates a registry
+/// from the NodeValidatorConfig.
+///
+/// This test:
+/// 1. Creates a NodeValidatorConfig with local + N remotes
+/// 2. Calls build_validator_key_registry()
+/// 3. Asserts len() equals 1 + remotes.len()
+/// 4. Asserts each validator_id has the expected ValidatorPublicKey bytes
+#[test]
+fn build_validator_key_registry_matches_config() {
+    use cano_consensus::ValidatorPublicKey;
+
+    let validator_config = NodeValidatorConfig {
+        local: LocalValidatorConfig {
+            validator_id: ValidatorId::new(1),
+            listen_addr: "127.0.0.1:9000".parse().unwrap(),
+            consensus_pk: format!("pk-{}", 1).into_bytes(),
+        },
+        remotes: vec![
+            RemoteValidatorConfig {
+                validator_id: ValidatorId::new(2),
+                addr: "127.0.0.1:9001".parse().unwrap(),
+                consensus_pk: format!("pk-{}", 2).into_bytes(),
+            },
+            RemoteValidatorConfig {
+                validator_id: ValidatorId::new(3),
+                addr: "127.0.0.1:9002".parse().unwrap(),
+                consensus_pk: format!("pk-{}", 3).into_bytes(),
+            },
+            RemoteValidatorConfig {
+                validator_id: ValidatorId::new(4),
+                addr: "127.0.0.1:9003".parse().unwrap(),
+                consensus_pk: format!("pk-{}", 4).into_bytes(),
+            },
+        ],
+    };
+
+    let registry = validator_config.build_validator_key_registry();
+
+    // Check the length is 1 (local) + 3 (remotes) = 4
+    assert_eq!(
+        registry.len(),
+        4,
+        "Registry should have 4 entries (1 local + 3 remotes)"
+    );
+    assert!(!registry.is_empty());
+
+    // Check each validator's public key is present with the correct bytes
+    let expected_pk1 = ValidatorPublicKey(format!("pk-{}", 1).into_bytes());
+    let expected_pk2 = ValidatorPublicKey(format!("pk-{}", 2).into_bytes());
+    let expected_pk3 = ValidatorPublicKey(format!("pk-{}", 3).into_bytes());
+    let expected_pk4 = ValidatorPublicKey(format!("pk-{}", 4).into_bytes());
+
+    assert!(registry.contains(&ValidatorId::new(1)));
+    assert_eq!(registry.get(&ValidatorId::new(1)), Some(&expected_pk1));
+
+    assert!(registry.contains(&ValidatorId::new(2)));
+    assert_eq!(registry.get(&ValidatorId::new(2)), Some(&expected_pk2));
+
+    assert!(registry.contains(&ValidatorId::new(3)));
+    assert_eq!(registry.get(&ValidatorId::new(3)), Some(&expected_pk3));
+
+    assert!(registry.contains(&ValidatorId::new(4)));
+    assert_eq!(registry.get(&ValidatorId::new(4)), Some(&expected_pk4));
+
+    // Verify that non-existent validators return None
+    assert!(!registry.contains(&ValidatorId::new(999)));
+    assert_eq!(registry.get(&ValidatorId::new(999)), None);
 }
