@@ -223,9 +223,11 @@ impl BasicHotStuffEngine<[u8; 32]> {
 
         let view = self.current_view;
 
-        // Parent is the locked block or committed block or none
+        // Parent is the locked block or committed block or none.
         // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
-        // can be a valid block_id (for the first proposal with proposer=0, view=0).
+        // can be a valid block_id. Specifically, the first proposal with proposer=0,
+        // view=0, and parent=[0u8;32] produces block_id=[0u8;32], making it unsuitable
+        // as a sentinel value.
         let parent_id = self
             .state
             .locked_qc()
@@ -353,9 +355,11 @@ impl BasicHotStuffEngine<[u8; 32]> {
             QuorumCertificate::new(wire_qc.block_id, wire_qc.height, vec![])
         });
 
-        // Register the block in our state
+        // Register the block in our state.
         // Note: We use [0xFF; 32] as the sentinel for "no parent" because [0u8; 32]
-        // can be a valid block_id (for the first proposal with proposer=0, view=0).
+        // can be a valid block_id. Specifically, the first proposal with proposer=0,
+        // view=0, and parent=[0u8;32] produces block_id=[0u8;32], making it unsuitable
+        // as a sentinel value.
         let parent_id = if proposal.header.parent_block_id == [0xFF; 32] {
             None
         } else {
