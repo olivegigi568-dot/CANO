@@ -385,7 +385,7 @@ where
     E: HasCommitLog<BlockIdT>,
 {
     fn drain_new_commits(&mut self) -> Vec<CommittedEntry<BlockIdT>> {
-        // Delegate to the existing method
+        // Use explicit method call to delegate to the inherent method, not a recursive call.
         HotStuffDriver::drain_new_commits(self)
     }
 }

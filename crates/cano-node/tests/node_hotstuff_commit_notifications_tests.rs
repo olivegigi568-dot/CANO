@@ -22,9 +22,13 @@ use cano_wire::net::NetworkDelegationCert;
 
 // ============================================================================
 // Dummy Implementations for Testing
+// (These are test-only implementations copied from other test files in the
+// repository. They provide no real cryptographic security and must NEVER be
+// used in production.)
 // ============================================================================
 
-/// A DummyKem that produces deterministic shared secrets based on pk/sk.
+/// A DummyKem that produces deterministic shared secrets for testing.
+/// This implementation is NOT cryptographically secure.
 struct DummyKem {
     suite_id: u8,
 }
@@ -86,7 +90,8 @@ impl KemSuite for DummyKem {
     }
 }
 
-/// A DummySig that always verifies successfully (for testing only).
+/// A DummySig that always verifies successfully.
+/// This implementation is NOT cryptographically secure - for testing only.
 struct DummySig {
     suite_id: u8,
 }
@@ -115,7 +120,8 @@ impl SignatureSuite for DummySig {
     }
 }
 
-/// A DummyAead that XORs with a single-byte key (test-only).
+/// A DummyAead that XORs with a single-byte key.
+/// WARNING: This provides NO cryptographic security - for testing only!
 struct DummyAead {
     suite_id: u8,
 }
