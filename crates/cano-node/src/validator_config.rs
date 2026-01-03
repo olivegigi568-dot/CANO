@@ -20,8 +20,9 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use cano_consensus::key_registry::ValidatorKeyRegistry;
 use cano_consensus::validator_set::{ConsensusValidatorSet, ValidatorSetEntry};
-use cano_consensus::ValidatorId;
+use cano_consensus::{ValidatorId, ValidatorPublicKey};
 use cano_net::{ClientConnectionConfig, ServerConnectionConfig};
 
 use crate::identity_map::PeerValidatorMap;
@@ -35,6 +36,8 @@ pub struct LocalValidatorConfig {
     pub validator_id: ValidatorId,
     /// The network address to listen on for incoming connections.
     pub listen_addr: SocketAddr,
+    /// The consensus public key for this validator (opaque bytes).
+    pub consensus_pk: Vec<u8>,
 }
 
 /// Configuration for a remote validator peer.
@@ -44,6 +47,8 @@ pub struct RemoteValidatorConfig {
     pub validator_id: ValidatorId,
     /// The network address of this remote validator.
     pub addr: SocketAddr,
+    /// The consensus public key for this validator (opaque bytes).
+    pub consensus_pk: Vec<u8>,
 }
 
 /// Combined configuration for a node's validator setup.
@@ -78,6 +83,32 @@ impl NodeValidatorConfig {
 
         ConsensusValidatorSet::new(entries)
             .expect("NodeValidatorConfig should not create duplicate validator ids")
+    }
+
+    /// Build a ValidatorKeyRegistry from this config, for tests.
+    ///
+    /// Each validator_id must appear at most once across local + remotes.
+    /// This method will panic (via debug_assert) if duplicate validator_ids are found.
+    pub fn build_validator_key_registry(&self) -> ValidatorKeyRegistry {
+        let mut reg = ValidatorKeyRegistry::new();
+
+        reg.insert(
+            self.local.validator_id,
+            ValidatorPublicKey(self.local.consensus_pk.clone()),
+        );
+
+        for remote in &self.remotes {
+            let id = remote.validator_id;
+            let pk = ValidatorPublicKey(remote.consensus_pk.clone());
+            let prev = reg.insert(id, pk);
+            debug_assert!(
+                prev.is_none(),
+                "duplicate validator_id in NodeValidatorConfig: {:?}",
+                id
+            );
+        }
+
+        reg
     }
 }
 
@@ -175,10 +206,12 @@ mod tests {
         let config = LocalValidatorConfig {
             validator_id: ValidatorId::new(1),
             listen_addr: "127.0.0.1:9000".parse().unwrap(),
+            consensus_pk: b"pk-1".to_vec(),
         };
 
         assert_eq!(config.validator_id, ValidatorId::new(1));
         assert_eq!(config.listen_addr.port(), 9000);
+        assert_eq!(config.consensus_pk, b"pk-1".to_vec());
     }
 
     #[test]
@@ -186,10 +219,12 @@ mod tests {
         let config = RemoteValidatorConfig {
             validator_id: ValidatorId::new(2),
             addr: "127.0.0.1:9001".parse().unwrap(),
+            consensus_pk: b"pk-2".to_vec(),
         };
 
         assert_eq!(config.validator_id, ValidatorId::new(2));
         assert_eq!(config.addr.port(), 9001);
+        assert_eq!(config.consensus_pk, b"pk-2".to_vec());
     }
 
     #[test]
@@ -198,15 +233,18 @@ mod tests {
             local: LocalValidatorConfig {
                 validator_id: ValidatorId::new(1),
                 listen_addr: "127.0.0.1:9000".parse().unwrap(),
+                consensus_pk: b"pk-1".to_vec(),
             },
             remotes: vec![
                 RemoteValidatorConfig {
                     validator_id: ValidatorId::new(2),
                     addr: "127.0.0.1:9001".parse().unwrap(),
+                    consensus_pk: b"pk-2".to_vec(),
                 },
                 RemoteValidatorConfig {
                     validator_id: ValidatorId::new(3),
                     addr: "127.0.0.1:9002".parse().unwrap(),
+                    consensus_pk: b"pk-3".to_vec(),
                 },
             ],
         };

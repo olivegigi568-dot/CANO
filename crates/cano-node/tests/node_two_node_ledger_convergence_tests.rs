@@ -323,10 +323,12 @@ fn make_two_node_configs() -> (NodeValidatorConfig, NodeValidatorConfig) {
         local: LocalValidatorConfig {
             validator_id: v0,
             listen_addr: addr0,
+            consensus_pk: vec![],
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: v1,
             addr: addr1,
+            consensus_pk: vec![],
         }],
     };
 
@@ -334,10 +336,12 @@ fn make_two_node_configs() -> (NodeValidatorConfig, NodeValidatorConfig) {
         local: LocalValidatorConfig {
             validator_id: v1,
             listen_addr: addr1,
+            consensus_pk: vec![],
         },
         remotes: vec![RemoteValidatorConfig {
             validator_id: v0,
             addr: addr0,
+            consensus_pk: vec![],
         }],
     };
 
