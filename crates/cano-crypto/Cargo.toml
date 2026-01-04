@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 cano-types = { path = "../cano-types" }
 cano-hash  = { path = "../cano-hash" }
+
+[dev-dependencies]
+sha3 = "0.10"
