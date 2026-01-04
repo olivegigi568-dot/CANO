@@ -397,3 +397,152 @@ fn crypto_verifier_with_multiple_validators() {
     assert!(verifier.verify_vote(ValidatorId::new(2), &vote1).is_err());
     assert!(verifier.verify_vote(ValidatorId::new(1), &vote2).is_err());
 }
+
+// ============================================================================
+// HotStuffDriver integration tests
+// ============================================================================
+
+/// Test that CryptoConsensusVerifier integrates correctly with HotStuffDriver.
+///
+/// This test wires up a CryptoConsensusVerifier into a HotStuffDriver and verifies
+/// that valid signatures are processed (incrementing votes_received) while invalid
+/// signatures are rejected (incrementing rejected_invalid_signatures).
+#[test]
+fn crypto_verifier_integrates_with_hotstuff_driver() {
+    use cano_consensus::{
+        ConsensusEngineDriver, ConsensusNetworkEvent, HotStuffDriver, HotStuffState,
+        MockConsensusNetwork,
+    };
+
+    // Setup: Create a registry with one validator
+    let pk_bytes = b"test-validator-public-key".to_vec();
+    let registry = build_registry_with_one_validator(1, pk_bytes.clone());
+    let verifier = CryptoConsensusVerifier::new(
+        registry,
+        Arc::new(TestHashConsensusSigVerifier),
+    );
+
+    // Create a HotStuffDriver with the verifier
+    let engine = HotStuffState::new_at_height(1);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> =
+        HotStuffDriver::new(engine).with_verifier(Arc::new(verifier));
+    let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    // Test 1: Valid vote is accepted
+    let mut valid_vote = make_vote_with_sig(1, 0, vec![]);
+    valid_vote.signature = sign_vote(&pk_bytes, &valid_vote);
+    let event = ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(1),
+        vote: valid_vote,
+    };
+    
+    let actions = driver.step(&mut net, Some(event)).unwrap();
+    assert_eq!(driver.votes_received(), 1, "Valid vote should be counted");
+    assert_eq!(driver.rejected_invalid_signatures(), 0, "No rejections expected");
+    assert!(!actions.is_empty(), "Should return at least Noop action");
+
+    // Test 2: Invalid (tampered) vote is rejected
+    let mut invalid_vote = make_vote_with_sig(1, 1, vec![]);
+    invalid_vote.signature = sign_vote(&pk_bytes, &invalid_vote);
+    invalid_vote.signature[0] ^= 0xff; // Tamper with signature
+    
+    let event = ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(1),
+        vote: invalid_vote,
+    };
+    
+    let actions = driver.step(&mut net, Some(event)).unwrap();
+    assert_eq!(driver.votes_received(), 1, "Invalid vote should not be counted");
+    assert_eq!(driver.rejected_invalid_signatures(), 1, "Tampered vote should be rejected");
+    assert!(actions.is_empty(), "No actions for rejected message");
+}
+
+/// Test that CryptoConsensusVerifier rejects votes from validators not in registry
+/// when integrated with HotStuffDriver.
+#[test]
+fn crypto_verifier_rejects_unknown_validator_in_driver() {
+    use cano_consensus::{
+        ConsensusEngineDriver, ConsensusNetworkEvent, HotStuffDriver, HotStuffState,
+        MockConsensusNetwork,
+    };
+
+    // Setup: Registry only has validator 1
+    let pk_bytes = b"validator-1-pk".to_vec();
+    let registry = build_registry_with_one_validator(1, pk_bytes.clone());
+    let verifier = CryptoConsensusVerifier::new(
+        registry,
+        Arc::new(TestHashConsensusSigVerifier),
+    );
+
+    let engine = HotStuffState::new_at_height(1);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> =
+        HotStuffDriver::new(engine).with_verifier(Arc::new(verifier));
+    let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    // Send a vote claiming to be from validator 999 (not in registry)
+    let mut vote = make_vote_with_sig(1, 0, vec![]);
+    // Even if we sign it correctly, the validator is not in the registry
+    let unknown_pk = b"unknown-validator-pk".to_vec();
+    vote.signature = sign_vote(&unknown_pk, &vote);
+    
+    let event = ConsensusNetworkEvent::IncomingVote {
+        from: ValidatorId::new(999),
+        vote,
+    };
+    
+    let actions = driver.step(&mut net, Some(event)).unwrap();
+    assert_eq!(driver.votes_received(), 0, "Unknown validator vote should not be counted");
+    assert_eq!(driver.rejected_invalid_signatures(), 1, "Unknown validator should be rejected");
+    assert!(actions.is_empty(), "No actions for rejected message");
+}
+
+/// Test CryptoConsensusVerifier with proposals in HotStuffDriver.
+#[test]
+fn crypto_verifier_handles_proposals_in_driver() {
+    use cano_consensus::{
+        ConsensusEngineDriver, ConsensusNetworkEvent, HotStuffDriver, HotStuffState,
+        MockConsensusNetwork,
+    };
+
+    // Setup
+    let pk_bytes = b"proposer-public-key".to_vec();
+    let registry = build_registry_with_one_validator(1, pk_bytes.clone());
+    let verifier = CryptoConsensusVerifier::new(
+        registry,
+        Arc::new(TestHashConsensusSigVerifier),
+    );
+
+    let engine = HotStuffState::new_at_height(1);
+    let mut driver: HotStuffDriver<HotStuffState, [u8; 32]> =
+        HotStuffDriver::new(engine).with_verifier(Arc::new(verifier));
+    let mut net: MockConsensusNetwork<ValidatorId> = MockConsensusNetwork::new();
+
+    // Test 1: Valid proposal is accepted
+    let mut valid_proposal = make_proposal_with_sig(1, 0, vec![]);
+    valid_proposal.signature = sign_proposal(&pk_bytes, &valid_proposal);
+    
+    let event = ConsensusNetworkEvent::IncomingProposal {
+        from: ValidatorId::new(1),
+        proposal: valid_proposal,
+    };
+    
+    let actions = driver.step(&mut net, Some(event)).unwrap();
+    assert_eq!(driver.proposals_received(), 1, "Valid proposal should be counted");
+    assert_eq!(driver.rejected_invalid_signatures(), 0, "No rejections expected");
+    assert!(!actions.is_empty(), "Should return at least Noop action");
+
+    // Test 2: Invalid proposal is rejected
+    let mut invalid_proposal = make_proposal_with_sig(1, 1, vec![]);
+    invalid_proposal.signature = sign_proposal(&pk_bytes, &invalid_proposal);
+    invalid_proposal.signature[0] ^= 0xff; // Tamper
+    
+    let event = ConsensusNetworkEvent::IncomingProposal {
+        from: ValidatorId::new(1),
+        proposal: invalid_proposal,
+    };
+    
+    let actions = driver.step(&mut net, Some(event)).unwrap();
+    assert_eq!(driver.proposals_received(), 1, "Invalid proposal should not be counted");
+    assert_eq!(driver.rejected_invalid_signatures(), 1, "Tampered proposal should be rejected");
+    assert!(actions.is_empty(), "No actions for rejected message");
+}
