@@ -20,6 +20,7 @@ dependencies = [
  "cano-types",
  "cano-wire",
  "rand",
+ "sha3",
 ]
 
 [[package]]
@@ -28,6 +29,7 @@ version = "0.1.0"
 dependencies = [
  "cano-hash",
  "cano-types",
+ "sha3",
 ]
 
 [[package]]

@@ -12,3 +12,4 @@ rand = "0.8"
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std_rng"] }
+sha3 = "0.10"
