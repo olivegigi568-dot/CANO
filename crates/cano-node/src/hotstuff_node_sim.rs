@@ -331,10 +331,13 @@ impl NodeHotstuffHarness {
                             .unwrap_or(ValidatorId::new(from.0));
 
                         // Process the vote through the engine
-                        let _ = self.sim.driver.engine_mut()
+                        let result = self.sim.driver.engine_mut()
                             .on_vote_event(from_validator, &vote);
-                        // Note: on_vote_event returns the QC if one was formed,
-                        // but we don't need to take any network action for it.
+
+                        // If a QC was formed, notify the pacemaker
+                        if let Ok(Some(qc)) = result {
+                            self.pacemaker.on_qc(qc.view);
+                        }
                     }
                 }
             }
