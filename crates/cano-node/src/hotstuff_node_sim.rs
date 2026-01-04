@@ -36,6 +36,7 @@ use cano_consensus::basic_hotstuff_engine::BasicHotStuffEngine;
 use cano_consensus::driver::{ConsensusEngineAction, HotStuffDriver, ValidatorContext};
 use cano_consensus::ids::ValidatorId;
 use cano_consensus::network::{ConsensusNetwork, ConsensusNetworkEvent};
+use cano_consensus::pacemaker::{BasicTickPacemaker, Pacemaker, PacemakerConfig};
 use cano_consensus::validator_set::ConsensusValidatorSet;
 use cano_net::{ClientConnectionConfig, ServerConnectionConfig};
 
@@ -163,6 +164,8 @@ pub struct NodeHotstuffHarness {
     /// Height of the last commit exposed via `drain_committed_blocks()`.
     /// `None` means no commits have been drained yet.
     last_drained_height: Option<u64>,
+    /// Pacemaker controlling proposal timing.
+    pacemaker: BasicTickPacemaker,
 }
 
 impl NodeHotstuffHarness {
@@ -213,12 +216,20 @@ impl NodeHotstuffHarness {
         // 8. Initialize an empty block store.
         let block_store = BlockStore::new();
 
+        // 9. Initialize the pacemaker with min_ticks_between_proposals = 1.
+        // This means "at most one proposal per view per step_once() call".
+        let pm_cfg = PacemakerConfig {
+            min_ticks_between_proposals: 1,
+        };
+        let pacemaker = BasicTickPacemaker::new(pm_cfg);
+
         Ok(NodeHotstuffHarness {
             validator_id: local_id,
             sim,
             commit_index,
             block_store,
             last_drained_height: None,
+            pacemaker,
         })
     }
 
@@ -267,7 +278,7 @@ impl NodeHotstuffHarness {
     /// 1. Advances the network (accept, ping-sweep, prune) via `step_network()`
     /// 2. Polls for consensus events via `try_recv_one()`
     /// 3. Processes events through the `BasicHotStuffEngine` methods
-    /// 4. Tries to propose if this node is the leader
+    /// 4. Tries to propose if this node is the leader and pacemaker allows
     /// 5. Applies resulting actions back to the network
     /// 6. Drains new commits and applies them to the commit index
     ///
@@ -320,10 +331,13 @@ impl NodeHotstuffHarness {
                             .unwrap_or(ValidatorId::new(from.0));
 
                         // Process the vote through the engine
-                        let _ = self.sim.driver.engine_mut()
+                        let result = self.sim.driver.engine_mut()
                             .on_vote_event(from_validator, &vote);
-                        // Note: on_vote_event returns the QC if one was formed,
-                        // but we don't need to take any network action for it.
+
+                        // If a QC was formed, notify the pacemaker
+                        if let Ok(Some(qc)) = result {
+                            self.pacemaker.on_qc(qc.view);
+                        }
                     }
                 }
             }
@@ -331,12 +345,20 @@ impl NodeHotstuffHarness {
             // With non-blocking I/O, messages may arrive at any time.
         }
 
-        // 3. Try to propose if we are the leader for the current view.
-        for action in self.sim.driver.engine_mut().try_propose() {
-            self.apply_action(action)?;
+        // 3. Consult the pacemaker to decide if we should try to propose.
+        // Get the current view from the engine.
+        let engine_view = self.sim.driver.engine().current_view();
+        let should_try = self.pacemaker.on_tick(engine_view);
+
+        // 4. Try to propose if the pacemaker allows and we are the leader.
+        // Note: try_propose() internally checks if we're the leader for the current view.
+        if should_try {
+            for action in self.sim.driver.engine_mut().try_propose() {
+                self.apply_action(action)?;
+            }
         }
 
-        // 4. Drain new commits and apply to commit index.
+        // 5. Drain new commits and apply to commit index.
         let new_commits: Vec<NodeCommitInfo<[u8; 32]>> = self.sim.drain_commits();
         if !new_commits.is_empty() {
             self.commit_index.apply_commits(new_commits)?;
